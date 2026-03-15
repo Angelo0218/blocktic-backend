@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: blocktic
+      POSTGRES_PASSWORD: blocktic
+      POSTGRES_DB: blocktic
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+
+  compreface-core:
+    image: exadel/compreface-core:1.2.0
+    environment:
+      ML_PORT: 3300
+    runtime: nvidia
+
+  compreface-api:
+    image: exadel/compreface-api:1.2.0
+    depends_on:
+      - compreface-core
+      - postgres
+    environment:
+      POSTGRES_URL: jdbc:postgresql://postgres:5432/blocktic
+      POSTGRES_USER: blocktic
+      POSTGRES_PASSWORD: blocktic
+      COMPREFACE_CORE_URL: http://compreface-core:3300
+    ports:
+      - '8000:8000'
+
+volumes:
+  pgdata:

@@ -1,0 +1,53 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { BullModule } from '@nestjs/bullmq';
+import { ScheduleModule } from '@nestjs/schedule';
+import { IdentityModule } from './identity/identity.module';
+import { LotteryModule } from './lottery/lottery.module';
+import { SeatAllocationModule } from './seat-allocation/seat-allocation.module';
+import { TicketingModule } from './ticketing/ticketing.module';
+import { GateVerificationModule } from './gate-verification/gate-verification.module';
+import { AuditModule } from './audit/audit.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        host: config.get('DB_HOST', 'localhost'),
+        port: config.get<number>('DB_PORT', 5432),
+        username: config.get('DB_USERNAME', 'blocktic'),
+        password: config.get('DB_PASSWORD', 'blocktic'),
+        database: config.get('DB_DATABASE', 'blocktic'),
+        autoLoadEntities: true,
+        synchronize: config.get('NODE_ENV', 'development') !== 'production',
+      }),
+    }),
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          host: config.get('REDIS_HOST', 'localhost'),
+          port: config.get<number>('REDIS_PORT', 6379),
+        },
+      }),
+    }),
+    ScheduleModule.forRoot(),
+    IdentityModule,
+    LotteryModule,
+    SeatAllocationModule,
+    TicketingModule,
+    GateVerificationModule,
+    AuditModule,
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
