@@ -75,7 +75,9 @@ export class TicketingService {
   }
 
   // ----------------------------------------------------------------
-  // Mint ERC-1155 ticket on Polygon
+  // Mint SBT (Soulbound Token) ticket on Polygon
+  // Only the platform (contract owner) can execute mint.
+  // SBTs are non-transferable by users.
   // ----------------------------------------------------------------
 
   async mintTicket(ticketId: string): Promise<Ticket> {
@@ -87,20 +89,20 @@ export class TicketingService {
       );
     }
 
-    // --- STUB: Polygon ERC-1155 mint ---
-    const { tokenId, txHash } = await this.mintErc1155(
+    // --- STUB: Polygon SBT mint (only platform/contract owner can call) ---
+    const { sbtTokenId, txHash } = await this.mintSbt(
       ticket.eventId,
       ticket.userId,
     );
 
     ticket.status = TicketStatus.MINTED;
-    ticket.tokenId = tokenId;
+    ticket.sbtTokenId = sbtTokenId;
     ticket.txHash = txHash;
     ticket.mintedAt = new Date();
     await this.ticketRepo.save(ticket);
 
     this.logger.log(
-      `Minted ticket ${ticketId} as token ${tokenId} (tx: ${txHash})`,
+      `Minted SBT ticket ${ticketId} as token ${sbtTokenId} (tx: ${txHash})`,
     );
     return ticket;
   }
@@ -129,9 +131,10 @@ export class TicketingService {
       await this.returnSeatToWaitlistPool(ticket.eventId, ticket.seatId);
     }
 
-    // --- STUB: burn ERC-1155 if already minted ---
-    if (ticket.tokenId) {
-      await this.burnErc1155(ticket.tokenId);
+    // --- STUB: burn SBT if already minted (only platform/contract owner can burn) ---
+    // Refund = platform burns the SBT + seat goes back to waitlist pool
+    if (ticket.sbtTokenId) {
+      await this.burnSbt(ticket.sbtTokenId);
     }
 
     ticket.status = TicketStatus.REFUNDED;
@@ -198,24 +201,26 @@ export class TicketingService {
     this.logger.warn(`[STUB] ECPay void trade: ${tradeNo}`);
   }
 
-  // ---------- Blockchain stubs ----------
+  // ---------- Blockchain stubs (SBT - Soulbound Token) ----------
+  // Only the platform (contract owner) can mint/burn SBTs.
+  // SBTs are non-transferable by users.
 
-  private async mintErc1155(
+  private async mintSbt(
     eventId: string,
     userId: string,
-  ): Promise<{ tokenId: string; txHash: string }> {
-    // TODO: call Polygon contract to mint ERC-1155 ticket
+  ): Promise<{ sbtTokenId: string; txHash: string }> {
+    // TODO: call Polygon contract to mint SBT ticket (platform-only operation)
     this.logger.warn(
-      `[STUB] Minting ERC-1155 for event=${eventId} user=${userId}`,
+      `[STUB] Minting SBT for event=${eventId} user=${userId}`,
     );
-    const tokenId = Math.floor(Math.random() * 1_000_000).toString();
+    const sbtTokenId = Math.floor(Math.random() * 1_000_000).toString();
     const txHash = `0x${Buffer.from(Math.random().toString()).toString('hex').slice(0, 64)}`;
-    return { tokenId, txHash };
+    return { sbtTokenId, txHash };
   }
 
-  private async burnErc1155(tokenId: string): Promise<void> {
-    // TODO: call Polygon contract to burn ERC-1155 ticket
-    this.logger.warn(`[STUB] Burning ERC-1155 token ${tokenId}`);
+  private async burnSbt(sbtTokenId: string): Promise<void> {
+    // TODO: call Polygon contract to burn SBT ticket (platform-only operation)
+    this.logger.warn(`[STUB] Burning SBT token ${sbtTokenId}`);
   }
 
   // ---------- Waitlist pool stub ----------

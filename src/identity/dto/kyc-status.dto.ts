@@ -8,6 +8,9 @@ export class KycStatusResponseDto {
   @ApiProperty({ description: 'Current KYC status', enum: KycStatus })
   kycStatus: KycStatus;
 
+  @ApiProperty({ description: 'ERC-4337 AA smart contract wallet address', nullable: true, required: false })
+  aaWalletAddress?: string | null;
+
   @ApiProperty({ description: 'On-chain attestation transaction hash', nullable: true })
   kycAttestationTxHash: string | null;
 

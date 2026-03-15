@@ -8,6 +8,7 @@ import { LotteryModule } from './lottery/lottery.module';
 import { SeatAllocationModule } from './seat-allocation/seat-allocation.module';
 import { TicketingModule } from './ticketing/ticketing.module';
 import { GateVerificationModule } from './gate-verification/gate-verification.module';
+import { BlockchainModule } from './blockchain/blockchain.module';
 import { AuditModule } from './audit/audit.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -45,6 +46,7 @@ import { AppService } from './app.service';
     SeatAllocationModule,
     TicketingModule,
     GateVerificationModule,
+    BlockchainModule,
     AuditModule,
   ],
   controllers: [AppController],

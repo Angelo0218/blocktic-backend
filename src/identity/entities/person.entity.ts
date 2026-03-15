@@ -36,6 +36,10 @@ export class Person {
   @Column({ type: 'varchar', length: 255, nullable: true })
   faceEmbeddingRef: string | null;
 
+  @ApiProperty({ description: 'ERC-4337 Account Abstraction smart contract wallet address', nullable: true })
+  @Column({ type: 'varchar', length: 42, nullable: true })
+  aaWalletAddress: string | null;
+
   @ApiProperty({ description: 'On-chain transaction hash of the KYC attestation' })
   @Column({ type: 'varchar', length: 66, nullable: true })
   kycAttestationTxHash: string | null;

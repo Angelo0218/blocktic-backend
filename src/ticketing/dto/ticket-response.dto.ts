@@ -34,13 +34,19 @@ export class TicketResponseDto {
   status: TicketStatus;
 
   @ApiPropertyOptional({
-    description: 'ERC-1155 token ID on Polygon',
+    description: 'SBT (Soulbound Token) ID on Polygon — non-transferable by users',
     example: '42',
   })
-  tokenId: string | null;
+  sbtTokenId: string | null;
 
   @ApiPropertyOptional({
-    description: 'Polygon transaction hash for minting',
+    description: "User's AA (Account Abstraction) wallet address that holds the SBT",
+    example: '0x1234567890abcdef1234567890abcdef12345678',
+  })
+  aaWalletAddress: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Polygon transaction hash for SBT minting',
     example: '0xabc123...',
   })
   txHash: string | null;
@@ -54,7 +60,7 @@ export class TicketResponseDto {
   @ApiPropertyOptional({ description: 'Payment capture timestamp' })
   paidAt: Date | null;
 
-  @ApiPropertyOptional({ description: 'NFT mint timestamp' })
+  @ApiPropertyOptional({ description: 'SBT mint timestamp' })
   mintedAt: Date | null;
 
   @ApiPropertyOptional({ description: 'Refund timestamp' })

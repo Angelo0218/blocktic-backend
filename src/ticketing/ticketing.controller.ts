@@ -51,7 +51,7 @@ export class TicketingController {
   // POST /tickets/:ticketId/mint
   @Post(':ticketId/mint')
   @ApiOperation({
-    summary: 'Mint ERC-1155 ticket on Polygon after payment capture',
+    summary: 'Mint SBT (Soulbound Token) ticket on Polygon after payment capture',
   })
   @ApiParam({ name: 'ticketId', type: 'string', format: 'uuid' })
   @ApiResponse({ status: 201, type: TicketResponseDto })

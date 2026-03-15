@@ -114,8 +114,12 @@ export class IdentityService {
       // ── All layers passed ─────────────────────────────────
       person.kycStatus = KycStatus.APPROVED;
 
-      // TODO: Publish on-chain attestation and store tx hash
-      // person.kycAttestationTxHash = await this.publishAttestation(person.id);
+      // TODO: Create ERC-4337 AA wallet and mint KYC Attestation SBT
+      // 1. Call BlockchainService.createAAWallet(person.id) → get walletAddress
+      // 2. person.aaWalletAddress = walletAddress
+      // 3. Call BlockchainService.mintKycSbt(walletAddress, kycTokenId)
+      // 4. person.kycAttestationTxHash = txHash
+      // Users never need MetaMask - platform Paymaster pays all gas fees
 
       await this.personRepo.save(person);
       return this.buildResponse(person, 'KYC approved. All verification layers passed.');
@@ -138,6 +142,7 @@ export class IdentityService {
     return {
       userId: person.id,
       kycStatus: person.kycStatus,
+      aaWalletAddress: person.aaWalletAddress,
       kycAttestationTxHash: person.kycAttestationTxHash,
       consentRecordedAt: person.consentRecordedAt,
       createdAt: person.createdAt,

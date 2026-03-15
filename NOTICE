@@ -42,6 +42,13 @@ Chainlink VRF
   https://github.com/smartcontractkit/chainlink
   License: MIT
 
+ERC-4337 Account Abstraction
+  Copyright (c) Ethereum Foundation
+  https://eips.ethereum.org/EIPS/eip-4337
+  License: MIT（標準規範）
+  本專案使用 ERC-4337 帳戶抽象標準實作使用者無感區塊鏈互動，
+  平台 Paymaster 代付所有 gas 費用。
+
 class-validator
   Copyright (c) 2015-2026 TypeStack
   https://github.com/typestack/class-validator
@@ -119,6 +126,8 @@ ECPay 綠界科技
 本專案之核心業務邏輯，包括但不限於：
   - KYC 四層防線架構設計
   - Chainlink VRF 可驗證公平抽籤流程
+  - SBT 靈魂綁定不可轉讓票券機制（BlockTicSBT 合約設計）
+  - ERC-4337 帳戶抽象整合（使用者零區塊鏈門檻）
   - 動態 QR + 人臉比對入場驗證機制
   - 退票回候補池防黃牛機制
   - 自動配位與團票連號演算法

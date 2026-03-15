@@ -38,7 +38,10 @@ export class Ticket {
   status: TicketStatus;
 
   @Column({ type: 'varchar', nullable: true })
-  tokenId: string | null;
+  sbtTokenId: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  aaWalletAddress: string | null;
 
   @Column({ type: 'varchar', nullable: true })
   txHash: string | null;

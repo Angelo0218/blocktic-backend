@@ -124,8 +124,8 @@ export class GateVerificationService {
       throw new BadRequestException(`Ticket status "${ticket.status}" is not valid for entry`);
     }
 
-    // 5. Check on-chain ERC-1155 ownership (placeholder)
-    const ownershipValid = await this.checkOnChainOwnership(ticket.tokenId, ticket.userId);
+    // 5. Check on-chain SBT (Soulbound Token) ownership (placeholder)
+    const ownershipValid = await this.checkOnChainOwnership(ticket.sbtTokenId, ticket.userId);
     if (!ownershipValid) {
       await this.saveLog(ticket.eventId, ticketId, gateId, VerificationMode.NORMAL, VerificationResult.FAILED, null, staffId);
       throw new UnauthorizedException('On-chain ticket ownership verification failed');
@@ -277,9 +277,11 @@ export class GateVerificationService {
   }
 
   /**
-   * Placeholder: check ERC-1155 ownership on-chain.
+   * Placeholder: check SBT (Soulbound Token) ownership on-chain.
    * In production this would call an RPC provider (e.g. ethers.js) to verify
-   * balanceOf(userId, tokenId) > 0 on the ticket contract.
+   * BlockTicSBT.balanceOf(userId) > 0 on the ticket contract.
+   * Since SBTs cannot be transferred, ownership check is even more reliable
+   * than fungible/semi-fungible tokens — the holder is always the original recipient.
    */
   private async checkOnChainOwnership(
     tokenId: string | null,
@@ -289,7 +291,7 @@ export class GateVerificationService {
       this.logger.warn('No tokenId on ticket, skipping on-chain check');
       return true;
     }
-    // TODO: implement actual on-chain ERC-1155 balanceOf check
+    // TODO: implement actual on-chain BlockTicSBT.balanceOf check
     return true;
   }
 
