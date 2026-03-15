@@ -1,0 +1,127 @@
+BlockTic - 智慧防黃牛票務系統
+Copyright (c) 2026 BlockTic Team
+
+本專案使用以下開源軟體，依各自授權條款合法使用：
+
+================================================================================
+MIT License 授權之開源專案
+================================================================================
+
+NestJS
+  Copyright (c) 2017-2026 Kamil Mysliwiec
+  https://github.com/nestjs/nest
+  License: MIT
+
+BullMQ
+  Copyright (c) 2019-2026 Taskforce.sh
+  https://github.com/taskforcesh/bullmq
+  License: MIT
+
+Expo
+  Copyright (c) 2015-2026 650 Industries, Inc. (Expo)
+  https://github.com/expo/expo
+  License: MIT
+
+React Native
+  Copyright (c) Meta Platforms, Inc. and affiliates
+  https://github.com/facebook/react-native
+  License: MIT
+
+Next.js
+  Copyright (c) 2016-2026 Vercel, Inc.
+  https://github.com/vercel/next.js
+  License: MIT
+
+OpenZeppelin Contracts
+  Copyright (c) 2016-2026 OpenZeppelin
+  https://github.com/OpenZeppelin/openzeppelin-contracts
+  License: MIT
+
+Chainlink VRF
+  Copyright (c) 2018-2026 SmartContract ChainLink, Ltd.
+  https://github.com/smartcontractkit/chainlink
+  License: MIT
+
+class-validator
+  Copyright (c) 2015-2026 TypeStack
+  https://github.com/typestack/class-validator
+  License: MIT
+
+class-transformer
+  Copyright (c) 2015-2026 TypeStack
+  https://github.com/typestack/class-transformer
+  License: MIT
+
+ethers.js
+  Copyright (c) 2016-2026 Richard Moore
+  https://github.com/ethers-io/ethers.js
+  License: MIT
+
+================================================================================
+Apache License 2.0 授權之開源專案
+================================================================================
+
+CompreFace
+  Copyright (c) 2020-2026 Exadel, Inc.
+  https://github.com/exadel-inc/CompreFace
+  License: Apache License 2.0
+  本專案使用 CompreFace 作為人臉辨識引擎，未修改其原始碼，
+  透過 REST API 方式呼叫。
+
+EasyOCR
+  Copyright (c) 2020-2026 JaidedAI
+  https://github.com/JaidedAI/EasyOCR
+  License: Apache License 2.0
+  本專案使用 EasyOCR 作為離線 OCR 備援方案，未修改其原始碼。
+
+================================================================================
+BSD License 授權之開源專案
+================================================================================
+
+Redis
+  Copyright (c) 2006-2026 Salvatore Sanfilippo
+  https://github.com/redis/redis
+  License: BSD-3-Clause
+
+================================================================================
+PostgreSQL License 授權之開源專案
+================================================================================
+
+PostgreSQL
+  Portions Copyright (c) 1996-2026, The PostgreSQL Global Development Group
+  Portions Copyright (c) 1994, The Regents of the University of California
+  https://www.postgresql.org/
+  License: PostgreSQL License
+
+================================================================================
+商業 API 服務（依使用條款付費呼叫）
+================================================================================
+
+Google Gemini API (Gemini 2.5 Flash Vision)
+  提供者：Google LLC（美國）
+  用途：身分證件 OCR 影像辨識
+  使用方式：透過 API 呼叫，依 Google Cloud 服務條款
+
+AWS Rekognition (Face Liveness)
+  提供者：Amazon Web Services, Inc.（美國）
+  用途：活體偵測（防照片/影片/面具假冒）
+  使用方式：透過 API 呼叫，依 AWS 服務條款
+
+ECPay 綠界科技
+  提供者：綠界科技股份有限公司（台灣）
+  用途：金流處理（信用卡預授權模式）
+  使用方式：透過 SDK 串接，依綠界商務合約
+
+================================================================================
+聲明
+================================================================================
+
+本專案之核心業務邏輯，包括但不限於：
+  - KYC 四層防線架構設計
+  - Chainlink VRF 可驗證公平抽籤流程
+  - 動態 QR + 人臉比對入場驗證機制
+  - 退票回候補池防黃牛機制
+  - 自動配位與團票連號演算法
+
+均為 BlockTic 團隊原創設計，不涉及任何第三方智慧財產權之侵權。
+上述開源技術僅作為工具層使用，本專案未複製、修改或衍生任何開源專案之核心程式碼。
