@@ -1,100 +1,102 @@
-# BlockTic Backend
+# BlockTic 後端服務
 
-AI-powered anti-scalper ticketing system with VRF verifiable lottery, face KYC, and blockchain audit trail.
+以 AI 驗證為核心、區塊鏈為公平稽核輔助的智慧防黃牛票務系統。
 
-## Architecture
+## 系統架構
 
-NestJS modular monolith with 6 core modules:
+NestJS 模組化單體後端，包含 6 大核心模組：
 
-| Module | Description |
-|--------|-------------|
-| **Identity/KYC** | 4-layer defense: ID uniqueness + AWS Liveness + CompreFace 1:1 + 1:N dedup |
-| **Lottery** | Chainlink VRF verifiable fair lottery on Polygon |
-| **Seat Allocation** | Auto consecutive seating with `FOR UPDATE SKIP LOCKED` |
-| **Ticketing** | ECPay pre-auth + ERC-1155 mint/burn + refund-to-waitlist |
-| **Gate Verification** | Dynamic QR (60s JWT) + face compare + offline fallback |
-| **Audit** | Immutable logs + scheduled data cleanup (GDPR) |
+| 模組 | 說明 |
+|------|------|
+| **Identity / KYC** | 四層防線：證件唯一性 + AWS 活體偵測 + CompreFace 1:1 比對 + 1:N 人臉去重 |
+| **Lottery** | Chainlink VRF 可驗證公平抽籤（Polygon 鏈上） |
+| **Seat Allocation** | 自動配位 + 團票連號（`FOR UPDATE SKIP LOCKED` 並發安全） |
+| **Ticketing** | ECPay 預授權 + ERC-1155 鑄造/銷毀 + 退票回候補池 |
+| **Gate Verification** | 動態 QR（60 秒 JWT）+ 人臉比對 + 離線備援 + fallback 證件驗證 |
+| **Audit** | 不可竄改稽核紀錄 + 排程資料清理（符合個資法） |
 
-## Tech Stack
+## 技術堆疊
 
-- **Runtime:** Node.js 22 + NestJS
-- **Database:** PostgreSQL 15 + Redis 7 (BullMQ)
-- **AI (Local GPU):** CompreFace (ArcFace-r100) + EasyOCR
-- **AI (Cloud):** Gemini 2.5 Flash Vision (ID OCR) + AWS Rekognition (Liveness)
-- **Blockchain:** Polygon PoS + Chainlink VRF v2.5 + ERC-1155
-- **Payment:** ECPay (pre-authorization mode)
+- **執行環境：** Node.js 22 + NestJS
+- **資料庫：** PostgreSQL 15 + Redis 7（BullMQ 任務佇列）
+- **本機 AI（GPU）：** CompreFace（ArcFace-r100 人臉辨識）+ EasyOCR（離線 OCR 備援）
+- **雲端 AI：** Gemini 2.5 Flash Vision（證件 OCR）+ AWS Rekognition（活體偵測）
+- **區塊鏈：** Polygon PoS + Chainlink VRF v2.5 + ERC-1155
+- **金流：** ECPay 綠界科技（預授權模式）
 
-> All technologies are non-Chinese developed (compliant with competition rules).
+> 所有技術均非中國開發，符合競賽須知第九條第七款規定。
 
-## Quick Start
+## 快速開始
 
 ```bash
-# 1. Start infrastructure
+# 1. 啟動基礎設施（PostgreSQL + Redis + CompreFace）
 docker compose up -d
 
-# 2. Install dependencies
+# 2. 安裝相依套件
 npm install
 
-# 3. Configure environment
+# 3. 設定環境變數
 cp .env.example .env
 
-# 4. Run development server
+# 4. 啟動開發伺服器
 npm run start:dev
 
-# 5. Open Swagger docs
+# 5. 開啟 Swagger API 文件
 open http://localhost:3000/api
 ```
 
-## Hardware Requirements
+## 硬體需求
 
-- **GPU:** NVIDIA RTX 3080 12GB (for CompreFace + EasyOCR, ~3GB VRAM)
-- **RAM:** 32GB
-- **Storage:** 50GB SSD
+- **GPU：** NVIDIA RTX 3080 12GB（CompreFace + EasyOCR 僅佔 ~3GB VRAM）
+- **記憶體：** 32GB RAM
+- **儲存：** 50GB SSD
 
-## API Modules
+## API 端點
 
-### Identity/KYC (`/identity`)
-- `POST /identity/kyc` - Submit KYC verification
-- `GET /identity/kyc/status/:userId` - Check KYC status
-- `DELETE /identity/:userId` - Delete user data (GDPR)
+### 身分驗證 / KYC（`/identity`）
+- `POST /identity/kyc` — 提交 KYC 驗證（上傳證件照 + 自拍照）
+- `GET /identity/kyc/status/:userId` — 查詢 KYC 狀態
+- `DELETE /identity/:userId` — 刪除使用者資料（符合個資法）
 
-### Lottery (`/lottery`)
-- `POST /lottery/events/:eventId/register` - Register for lottery
-- `POST /lottery/events/:eventId/draw` - Trigger VRF draw (admin)
-- `GET /lottery/events/:eventId/results` - Get draw results
-- `GET /lottery/events/:eventId/proof` - Get on-chain proof
+### 抽籤（`/lottery`）
+- `POST /lottery/events/:eventId/register` — 登記抽籤（選擇票區 + 人數）
+- `POST /lottery/events/:eventId/draw` — 觸發 VRF 抽籤（管理員）
+- `GET /lottery/events/:eventId/results` — 查詢抽籤結果
+- `GET /lottery/events/:eventId/proof` — 取得鏈上抽籤證明
 
-### Seat Allocation (`/seats`)
-- `POST /seats/events/:eventId/allocate` - Auto-allocate seats
-- `GET /seats/events/:eventId/map` - Get seat availability
-- `DELETE /seats/:seatId/release` - Release seat
+### 座位配置（`/seats`）
+- `POST /seats/events/:eventId/allocate` — 自動配位（團票連號）
+- `GET /seats/events/:eventId/map` — 查詢座位可用狀態
+- `DELETE /seats/:seatId/release` — 釋放座位（退票用）
 
-### Ticketing (`/tickets`)
-- `POST /tickets/events/:eventId/preauth` - Pre-authorize payment
-- `POST /tickets/:ticketId/capture` - Capture payment
-- `POST /tickets/:ticketId/mint` - Mint ERC-1155
-- `POST /tickets/:ticketId/refund` - Refund to waitlist
-- `GET /tickets/user/:userId` - User's tickets
+### 票務（`/tickets`）
+- `POST /tickets/events/:eventId/preauth` — ECPay 預授權扣款（21 天）
+- `POST /tickets/:ticketId/capture` — 中籤後請款
+- `POST /tickets/:ticketId/mint` — 鑄造 ERC-1155 票券 NFT
+- `POST /tickets/:ticketId/refund` — 退票（退款 + burn + 回候補池）
+- `GET /tickets/user/:userId` — 查詢使用者的票券
+- `GET /tickets/:ticketId` — 查詢單張票券詳情
 
-### Gate Verification (`/gate`)
-- `POST /gate/qr/generate` - Generate dynamic QR
-- `POST /gate/verify` - Verify entry (QR + face)
-- `POST /gate/verify/fallback` - Fallback with ID number
-- `GET /gate/events/:eventId/stats` - Entry stats
+### 入場驗證（`/gate`）
+- `POST /gate/qr/generate` — 產生動態 QR（JWT 含 ticketId + nonce，60 秒過期）
+- `POST /gate/verify` — 驗證入場（掃 QR + 人臉比對）
+- `POST /gate/verify/fallback` — 備援驗證（出示證件號碼）
+- `GET /gate/events/:eventId/stats` — 入場統計數據
 
-### Audit (`/audit`)
-- `GET /audit/logs` - Query audit logs
-- `GET /audit/events/:eventId/summary` - Event summary
+### 稽核（`/audit`）
+- `GET /audit/logs` — 查詢稽核紀錄（支援分頁與篩選）
+- `GET /audit/events/:eventId/summary` — 活動稽核摘要
 
-## AI Lightweight Design
+## AI 輕量化設計
 
-This system adopts an **AI lightweight architecture** optimized for edge deployment:
+本系統採用 **AI 輕量化混合架構**，針對邊緣部署優化：
 
-1. **CompreFace** runs locally on consumer GPU (RTX 3080), using only ~3GB of 12GB VRAM
-2. **EasyOCR** serves as offline backup, requiring only ~300MB VRAM
-3. Cloud AI services (Gemini Flash, AWS Rekognition) are used only for tasks requiring highest accuracy
-4. Per-ticket AI cost: < NT$5 (combining local + cloud)
+1. **CompreFace** 人臉辨識在本機消費級 GPU（RTX 3080）運行，僅佔用 ~3GB / 12GB VRAM
+2. **EasyOCR** 作為離線 OCR 備援，僅需 ~300MB VRAM
+3. 雲端 AI 服務（Gemini Flash、AWS Rekognition）僅在需要最高精度時使用，避免不必要的雲端開銷
+4. 每張票 AI 總成本 < NT$5，結合本機推論與雲端 API 的高效混合架構
+5. 本機 GPU 總 VRAM 使用量僅 ~3GB，保留 9GB 餘裕空間供未來擴展
 
-## License
+## 授權條款
 
 MIT
