@@ -97,6 +97,29 @@ open http://localhost:3000/api
 4. 每張票 AI 總成本 < NT$5，結合本機推論與雲端 API 的高效混合架構
 5. 本機 GPU 總 VRAM 使用量僅 ~3GB，保留 9GB 餘裕空間供未來擴展
 
+## 開源技術合規聲明
+
+本系統採用之所有開源技術均依其授權條款合法使用，所有業務邏輯、AI 串接流程與系統架構為團隊原創設計。
+
+| 技術 | 開發者 / 國家 | 授權 | 使用義務 |
+|------|-------------|------|---------|
+| NestJS | Kamil Mysliwiec（波蘭） | MIT | 保留版權聲明 |
+| PostgreSQL | PGDG（國際） | PostgreSQL License | 保留版權聲明 |
+| Redis | Redis Ltd（美國） | BSD-3 | 保留版權聲明 |
+| BullMQ | Taskforce.sh（美國） | MIT | 保留版權聲明 |
+| CompreFace | Exadel（美國） | Apache 2.0 | 保留 LICENSE + NOTICE，標註修改 |
+| EasyOCR | JaidedAI（泰國） | Apache 2.0 | 保留 LICENSE + NOTICE，標註修改 |
+| Expo | Expo（美國） | MIT | 保留版權聲明 |
+| React Native | Meta（美國） | MIT | 保留版權聲明 |
+| Next.js | Vercel（美國） | MIT | 保留版權聲明 |
+| OpenZeppelin | OpenZeppelin（阿根廷/美國） | MIT | 保留版權聲明 |
+| Chainlink VRF | Chainlink Labs（美國） | MIT | 保留版權聲明 |
+| Gemini API | Google（美國） | 商業 API | 依使用條款付費呼叫 |
+| AWS Rekognition | Amazon（美國） | 商業 API | 依使用條款付費呼叫 |
+| ECPay SDK | 綠界科技（台灣） | 商業 | 依合約串接 |
+
+> 上述開源技術均為工具層使用（如同使用 Word 撰寫文件），本作品之 KYC 四層防線設計、VRF 抽籤流程、動態 QR 驗票機制、退票回候補池等核心業務邏輯皆為團隊原創，不涉及任何智慧財產權侵權。
+
 ## 授權條款
 
 MIT
