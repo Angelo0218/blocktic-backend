@@ -7,18 +7,24 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { GateVerificationService } from './gate-verification.service';
 import { GenerateQrDto } from './dto/generate-qr.dto';
 import { VerifyEntryDto, FallbackVerifyDto } from './dto/verify-entry.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles, Role } from '../common/decorators/roles.decorator';
 
 @ApiTags('Gate Verification')
+@ApiBearerAuth()
 @Controller('gate')
 export class GateVerificationController {
   constructor(private readonly gateVerificationService: GateVerificationService) {}
 
   @Post('qr/generate')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Generate dynamic QR code (JWT with ticketId + nonce + 60s expiry)' })
   @ApiResponse({ status: 200, description: 'QR token generated successfully' })
@@ -28,7 +34,10 @@ export class GateVerificationController {
     return this.gateVerificationService.generateDynamicQr(dto.ticketId);
   }
 
+  // 驗票端點：需要 staff 角色（閘門工作人員）
   @Post('verify')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify entry by scanning QR code with optional face comparison' })
   @ApiResponse({ status: 200, description: 'Entry verified successfully' })
@@ -44,8 +53,10 @@ export class GateVerificationController {
   }
 
   @Post('verify/fallback')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Fallback verification using government ID number' })
+  @ApiOperation({ summary: 'Fallback verification using government ID number (admin/staff only)' })
   @ApiResponse({ status: 200, description: 'Fallback verification succeeded' })
   @ApiResponse({ status: 400, description: 'No matching person or ticket found' })
   async fallbackVerify(@Body() dto: FallbackVerifyDto) {
@@ -58,7 +69,9 @@ export class GateVerificationController {
   }
 
   @Get('events/:eventId/stats')
-  @ApiOperation({ summary: 'Get entry verification statistics for an event' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get entry verification statistics for an event (admin)' })
   @ApiResponse({ status: 200, description: 'Entry statistics returned' })
   async getStats(@Param('eventId', ParseUUIDPipe) eventId: string) {
     return this.gateVerificationService.getEntryStats(eventId);

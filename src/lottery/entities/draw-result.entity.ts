@@ -3,6 +3,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  Index,
 } from 'typeorm';
 
 @Entity('draw_results')
@@ -10,7 +11,8 @@ export class DrawResult {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column('uuid')
+  @Index({ unique: true })
+  @Column({ type: 'uuid', unique: true })
   eventId: string;
 
   @Column({ type: 'varchar', nullable: true })

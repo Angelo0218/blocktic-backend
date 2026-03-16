@@ -93,6 +93,7 @@ contract BlockTicVRF {
     function rawFulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) external {
         require(msg.sender == address(coordinator), "Only coordinator");
         require(!requests[requestId].fulfilled, "Already fulfilled");
+        require(randomWords.length > 0, "Empty random words");
 
         requests[requestId].fulfilled = true;
         requests[requestId].randomWord = randomWords[0];

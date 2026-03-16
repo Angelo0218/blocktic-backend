@@ -8,23 +8,31 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiBearerAuth,
 } from '@nestjs/swagger';
 import { IdentityService } from './identity.service';
 import { SubmitKycDto } from './dto/submit-kyc.dto';
 import { KycStatusResponseDto, KycSubmitResponseDto } from './dto/kyc-status.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles, Role } from '../common/decorators/roles.decorator';
 
 @ApiTags('Identity / KYC')
+@ApiBearerAuth()
 @Controller('identity')
 export class IdentityController {
   constructor(private readonly identityService: IdentityService) {}
 
   @Post('kyc')
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Submit KYC verification',
@@ -40,6 +48,7 @@ export class IdentityController {
   }
 
   @Get('kyc/status/:userId')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Get KYC verification status for a user' })
   @ApiParam({ name: 'userId', description: 'Person UUID', type: String })
   @ApiResponse({ status: 200, description: 'KYC status', type: KycStatusResponseDto })
@@ -51,9 +60,11 @@ export class IdentityController {
   }
 
   @Delete(':userId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Delete user data (GDPR right-to-erasure)',
+    summary: 'Delete user data (GDPR right-to-erasure, admin only)',
     description:
       'Removes all personal data associated with the user, including face embeddings ' +
       'and stored images.',
