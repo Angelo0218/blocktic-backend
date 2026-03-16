@@ -19,7 +19,7 @@ async function main() {
   const privateKey = process.env.POLYGON_PRIVATE_KEY;
 
   if (!rpcUrl || !privateKey) {
-    console.error('❌ 請設定 POLYGON_RPC_URL 和 POLYGON_PRIVATE_KEY');
+    console.error('[ERROR] 請設定 POLYGON_RPC_URL 和 POLYGON_PRIVATE_KEY');
     process.exit(1);
   }
 
@@ -28,17 +28,17 @@ async function main() {
 
   const network = await provider.getNetwork();
   const balance = await provider.getBalance(wallet.address);
-  console.log(`🔗 網路: ${network.name} (chainId: ${network.chainId})`);
-  console.log(`👛 Deployer: ${wallet.address}`);
-  console.log(`💰 餘額: ${(Number(balance) / 1e18).toFixed(4)} POL`);
+  console.log(`[INFO] 網路: ${network.name} (chainId: ${network.chainId})`);
+  console.log(`[INFO] Deployer: ${wallet.address}`);
+  console.log(`[INFO] 餘額: ${(Number(balance) / 1e18).toFixed(4)} POL`);
 
   if (balance === 0n) {
-    console.error('❌ 餘額為 0，請先取得測試 POL');
+    console.error('[ERROR] 餘額為 0，請先取得測試 POL');
     process.exit(1);
   }
 
   // ── 編譯 Solidity ──
-  console.log('\n📦 編譯 BlockTicSBT.sol...');
+  console.log('\n[INFO] 編譯 BlockTicSBT.sol...');
 
   const contractSource = fs.readFileSync(
     path.resolve(__dirname, '..', 'contracts', 'BlockTicSBT.sol'),
@@ -74,37 +74,37 @@ async function main() {
   if (output.errors) {
     const errors = output.errors.filter((e) => e.severity === 'error');
     if (errors.length > 0) {
-      console.error('❌ 編譯失敗:');
+      console.error('[ERROR] 編譯失敗:');
       errors.forEach((e) => console.error(e.formattedMessage));
       process.exit(1);
     }
     // 只有 warning，繼續
     output.errors
       .filter((e) => e.severity === 'warning')
-      .forEach((e) => console.warn(`⚠️  ${e.message}`));
+      .forEach((e) => console.warn(`[WARN] ${e.message}`));
   }
 
   const contract = output.contracts['BlockTicSBT.sol']['BlockTicSBT'];
   const abi = contract.abi;
   const bytecode = '0x' + contract.evm.bytecode.object;
 
-  console.log(`✅ 編譯完成 — bytecode ${bytecode.length} bytes`);
+  console.log(`[INFO] 編譯完成 — bytecode ${bytecode.length} bytes`);
 
   // ── 部署 ──
-  console.log('\n🚀 部署 BlockTicSBT 到 Polygon Amoy...');
+  console.log('\n[INFO] 部署 BlockTicSBT 到 Polygon Amoy...');
 
   const factory = new ContractFactory(abi, bytecode, wallet);
   const deployTx = await factory.deploy();
 
-  console.log(`📝 交易已送出 — txHash: ${deployTx.deploymentTransaction().hash}`);
-  console.log('⏳ 等待確認...');
+  console.log(`[INFO] 交易已送出 — txHash: ${deployTx.deploymentTransaction().hash}`);
+  console.log('[INFO] 等待確認...');
 
   await deployTx.waitForDeployment();
   const deployedAddress = await deployTx.getAddress();
 
-  console.log(`\n✅ BlockTicSBT 部署成功！`);
-  console.log(`📍 合約地址: ${deployedAddress}`);
-  console.log(`🔗 Polygonscan: https://amoy.polygonscan.com/address/${deployedAddress}`);
+  console.log(`\n[OK] BlockTicSBT 部署成功`);
+  console.log(`[OK] 合約地址: ${deployedAddress}`);
+  console.log(`[OK] Polygonscan: https://amoy.polygonscan.com/address/${deployedAddress}`);
 
   // ── 更新 .env ──
   const envPath = path.resolve(__dirname, '..', '.env');
@@ -114,10 +114,10 @@ async function main() {
     `SBT_CONTRACT_ADDRESS=${deployedAddress}`,
   );
   fs.writeFileSync(envPath, envContent);
-  console.log(`\n📝 .env 已更新 SBT_CONTRACT_ADDRESS=${deployedAddress}`);
+  console.log(`\n[OK] .env 已更新 SBT_CONTRACT_ADDRESS=${deployedAddress}`);
 }
 
 main().catch((err) => {
-  console.error('❌ 部署失敗:', err.message);
+  console.error('[ERROR] 部署失敗:', err.message);
   process.exit(1);
 });
