@@ -3,6 +3,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   ConflictException,
+  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -15,6 +16,7 @@ import Redis from 'ioredis';
 import { GateLog, VerificationMode, VerificationResult } from './entities/gate-log.entity';
 import { Ticket, TicketStatus } from '../ticketing/entities/ticket.entity';
 import { Person } from '../identity/entities/person.entity';
+import { BlockchainService } from '../blockchain/blockchain.service';
 
 interface QrPayload {
   sub: string; // ticketId
@@ -37,6 +39,9 @@ export class GateVerificationService {
   private readonly redis: Redis;
   private readonly QR_TTL_SECONDS = 60;
   private readonly NONCE_KEY_PREFIX = 'gate:nonce:';
+  private readonly comprefaceUrl: string;
+  private readonly recognizeApiKey: string;
+  private readonly faceMatchThreshold: number;
 
   constructor(
     private readonly jwtService: JwtService,
@@ -47,11 +52,16 @@ export class GateVerificationService {
     private readonly ticketRepo: Repository<Ticket>,
     @InjectRepository(Person)
     private readonly personRepo: Repository<Person>,
+    private readonly blockchainService: BlockchainService,
   ) {
     this.redis = new Redis({
       host: this.configService.get('REDIS_HOST', 'localhost'),
       port: this.configService.get<number>('REDIS_PORT', 6379),
     });
+
+    this.comprefaceUrl = this.configService.getOrThrow<string>('COMPREFACE_URL');
+    this.recognizeApiKey = this.configService.getOrThrow<string>('COMPREFACE_RECOGNIZE_API_KEY');
+    this.faceMatchThreshold = this.configService.get<number>('FACE_MATCH_THRESHOLD', 0.85);
   }
 
   // ── Generate Dynamic QR ──────────────────────────────────────────────
@@ -124,8 +134,8 @@ export class GateVerificationService {
       throw new BadRequestException(`Ticket status "${ticket.status}" is not valid for entry`);
     }
 
-    // 5. Check on-chain SBT (Soulbound Token) ownership (placeholder)
-    const ownershipValid = await this.checkOnChainOwnership(ticket.sbtTokenId, ticket.userId);
+    // 5. Check on-chain SBT ownership
+    const ownershipValid = await this.checkOnChainOwnership(ticket.sbtTokenId, ticket.aaWalletAddress);
     if (!ownershipValid) {
       await this.saveLog(ticket.eventId, ticketId, gateId, VerificationMode.NORMAL, VerificationResult.FAILED, null, staffId);
       throw new UnauthorizedException('On-chain ticket ownership verification failed');
@@ -139,8 +149,7 @@ export class GateVerificationService {
       mode = VerificationMode.STRONG;
       faceScore = await this.compareFace(ticket.userId, facePhoto);
 
-      const threshold = this.configService.get<number>('FACE_MATCH_THRESHOLD', 0.8);
-      if (faceScore < threshold) {
+      if (faceScore < this.faceMatchThreshold) {
         await this.saveLog(ticket.eventId, ticketId, gateId, mode, VerificationResult.FAILED, faceScore, staffId);
         throw new UnauthorizedException(`Face match score ${faceScore.toFixed(2)} below threshold`);
       }
@@ -277,34 +286,87 @@ export class GateVerificationService {
   }
 
   /**
-   * Placeholder: check SBT (Soulbound Token) ownership on-chain.
-   * In production this would call an RPC provider (e.g. ethers.js) to verify
-   * BlockTicSBT.balanceOf(userId) > 0 on the ticket contract.
-   * Since SBTs cannot be transferred, ownership check is even more reliable
-   * than fungible/semi-fungible tokens — the holder is always the original recipient.
+   * 驗證鏈上 SBT 持有狀態 — 呼叫 BlockTicSBT.balanceOf()。
+   *
+   * SBT 不可轉讓，因此持有者一定是原始接收者，驗證更可靠。
+   * 若 ticket 尚未鑄造 SBT（status=PAID），跳過鏈上驗證。
    */
   private async checkOnChainOwnership(
     tokenId: string | null,
-    _userId: string,
+    walletAddress: string | null,
   ): Promise<boolean> {
-    if (!tokenId) {
-      this.logger.warn('No tokenId on ticket, skipping on-chain check');
+    if (!tokenId || !walletAddress) {
+      this.logger.warn('Ticket 無 SBT tokenId 或 walletAddress，跳過鏈上驗證');
       return true;
     }
-    // TODO: implement actual on-chain BlockTicSBT.balanceOf check
-    return true;
+
+    try {
+      return await this.blockchainService.verifySbtOwnership(
+        walletAddress,
+        parseInt(tokenId, 10),
+      );
+    } catch (error) {
+      this.logger.error(`鏈上 SBT 驗證失敗 — tokenId=${tokenId}`, error);
+      // 鏈上查詢失敗時不阻擋入場，記錄警告
+      return true;
+    }
   }
 
   /**
-   * Placeholder: compare face photo against stored embedding via CompreFace.
-   * Returns a similarity score between 0 and 1.
+   * 入場人臉比對 — 透過 CompreFace Recognition API 比對現場照片與已註冊人臉。
+   *
+   * 以 Person.faceEmbeddingRef（subject ID）為基準，
+   * 將現場拍攝的照片送至 CompreFace 辨識，比對相似度。
    */
-  private async compareFace(_userId: string, _facePhotoBase64: string): Promise<number> {
-    // TODO: integrate with CompreFace API
-    // 1. Retrieve faceEmbeddingRef from Person entity
-    // 2. Send facePhotoBase64 to CompreFace /api/v1/recognition/recognize
-    // 3. Return similarity score
-    this.logger.warn('Face comparison is using stub implementation');
-    return 0.95;
+  private async compareFace(userId: string, facePhotoBase64: string): Promise<number> {
+    // 取得使用者的 faceEmbeddingRef
+    const person = await this.personRepo.findOne({ where: { id: userId } });
+    if (!person?.faceEmbeddingRef) {
+      this.logger.warn(`使用者 ${userId} 無人臉嵌入資料，STRONG 模式下拒絕入場`);
+      return 0; // STRONG 模式需有嵌入資料才能比對，回傳 0 觸發拒絕
+    }
+
+    // 去除 data URL prefix
+    const base64 = facePhotoBase64.includes(',')
+      ? facePhotoBase64.split(',')[1]
+      : facePhotoBase64;
+
+    const imageBuffer = Buffer.from(base64, 'base64');
+
+    const formData = new FormData();
+    formData.append('file', new Blob([imageBuffer]), 'gate-face.jpg');
+
+    const response = await fetch(
+      `${this.comprefaceUrl}/api/v1/recognition/recognize`,
+      {
+        method: 'POST',
+        headers: { 'x-api-key': this.recognizeApiKey },
+        body: formData,
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      this.logger.error(`CompreFace 入場人臉辨識失敗 — status=${response.status}, body=${body}`);
+      throw new InternalServerErrorException('Face recognition service unavailable.');
+    }
+
+    const data = await response.json() as {
+      result: Array<{ subjects: Array<{ subject: string; similarity: number }> }>;
+    };
+
+    // 找到與此使用者 subject 匹配的結果
+    const subjects = data.result?.[0]?.subjects ?? [];
+    const match = subjects.find((s) => s.subject === person.faceEmbeddingRef);
+
+    if (!match) {
+      this.logger.warn(`入場人臉比對：未匹配到 subject=${person.faceEmbeddingRef}`);
+      return 0;
+    }
+
+    this.logger.log(
+      `入場人臉比對 — subject=${match.subject}, similarity=${match.similarity.toFixed(3)}`,
+    );
+    return match.similarity;
   }
 }

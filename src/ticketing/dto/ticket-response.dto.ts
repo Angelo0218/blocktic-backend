@@ -27,6 +27,12 @@ export class TicketResponseDto {
   seatId: string | null;
 
   @ApiProperty({
+    description: 'Ticket amount in TWD',
+    example: 1500,
+  })
+  amount: number;
+
+  @ApiProperty({
     description: 'Current ticket status',
     enum: TicketStatus,
     example: TicketStatus.PREAUTHORIZED,

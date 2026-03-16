@@ -46,6 +46,9 @@ export class Ticket {
   @Column({ type: 'varchar', nullable: true })
   txHash: string | null;
 
+  @Column({ type: 'int' })
+  amount: number;
+
   @Column({ type: 'varchar', nullable: true })
   preauthTradeNo: string | null;
 

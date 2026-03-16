@@ -5,6 +5,8 @@ import {
   Param,
   Body,
   ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -31,7 +33,7 @@ export class TicketingController {
   async preauthorize(
     @Param('eventId', ParseUUIDPipe) eventId: string,
     @Body() dto: PreauthDto,
-  ): Promise<{ ticket: TicketResponseDto; paymentUrl: string }> {
+  ): Promise<{ ticket: TicketResponseDto; paymentFormData: Record<string, string> }> {
     return this.ticketingService.preauthorize(eventId, dto);
   }
 
@@ -72,6 +74,20 @@ export class TicketingController {
     @Param('ticketId', ParseUUIDPipe) ticketId: string,
   ): Promise<TicketResponseDto> {
     return this.ticketingService.refundTicket(ticketId);
+  }
+
+  // POST /tickets/ecpay/callback（綠界伺服器回呼）
+  @Post('ecpay/callback')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'ECPay server callback (webhook)',
+    description: '綠界付款結果通知端點，回傳 "1|OK" 表示收到。',
+  })
+  @ApiResponse({ status: 200, description: '1|OK or error message' })
+  async ecpayCallback(
+    @Body() body: Record<string, string>,
+  ): Promise<string> {
+    return this.ticketingService.handleEcpayCallback(body);
   }
 
   // GET /tickets/user/:userId

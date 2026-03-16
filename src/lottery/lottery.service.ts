@@ -2,13 +2,15 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { createHash } from 'crypto';
+import { keccak256, solidityPacked } from 'ethers';
 import { LotteryEntry, LotteryEntryStatus } from './entities/lottery-entry.entity';
 import { DrawResult } from './entities/draw-result.entity';
+import { BlockchainService } from '../blockchain/blockchain.service';
+import { IdentityService } from '../identity/identity.service';
 import { RegisterLotteryDto } from './dto/register-lottery.dto';
 import {
   DrawResultResponseDto,
@@ -18,11 +20,15 @@ import {
 
 @Injectable()
 export class LotteryService {
+  private readonly logger = new Logger(LotteryService.name);
+
   constructor(
     @InjectRepository(LotteryEntry)
     private readonly entryRepo: Repository<LotteryEntry>,
     @InjectRepository(DrawResult)
     private readonly drawResultRepo: Repository<DrawResult>,
+    private readonly blockchainService: BlockchainService,
+    private readonly identityService: IdentityService,
   ) {}
 
   /**
@@ -55,11 +61,12 @@ export class LotteryService {
    * Trigger the lottery draw for an event.
    *
    * Steps:
-   *  1. Request randomness from Chainlink VRF (stubbed).
+   *  1. Request randomness from Chainlink VRF.
    *  2. Group entries by (zoneId, groupSize) into pools.
    *  3. For each pool, expand the VRF seed via keccak256 to produce a
    *     deterministic per-entry sort key, then sort and select winners.
-   *  4. Persist the draw result and update entry statuses.
+   *  4. Record draw proof on-chain via BlockTicSBT.recordDraw().
+   *  5. Persist the draw result and update entry statuses.
    */
   async draw(eventId: string): Promise<DrawResultResponseDto> {
     const entries = await this.entryRepo.find({ where: { eventId } });
@@ -74,38 +81,68 @@ export class LotteryService {
       throw new ConflictException('Draw has already been executed for this event');
     }
 
-    // --- Step 1: Request Chainlink VRF randomness (stub) ---
-    const { vrfRequestId, randomSeed } = await this.requestVrfRandomness();
+    // ── Step 1: Request Chainlink VRF randomness ───────────
+    const { vrfRequestId, randomWord } =
+      await this.blockchainService.requestVrfRandomness();
 
-    // --- Step 2: Group entries into pools by zoneId + groupSize ---
+    const randomSeedHex = `0x${randomWord.toString(16).padStart(64, '0')}`;
+
+    // ── Step 2: Group entries into pools by zoneId + groupSize ──
     const pools = this.groupIntoPools(entries);
 
-    // --- Step 3: For each pool, expand seed and sort to pick winners ---
-    for (const [_poolKey, poolEntries] of pools) {
-      this.selectWinners(poolEntries, randomSeed, _poolKey);
+    // ── Step 3: For each pool, expand seed and sort to pick winners ──
+    for (const [poolKey, poolEntries] of pools) {
+      this.selectWinners(poolEntries, randomSeedHex, poolKey);
     }
 
-    // --- Step 4: Publish draw proof on-chain (stub) ---
-    const drawProofTxHash = await this.publishDrawProof(eventId, randomSeed);
+    const winnerEntries = entries.filter((e) => e.status === LotteryEntryStatus.WON);
 
-    // Persist draw result
+    // ── Step 4: 先持久化 DB（確保抽籤結果不遺失）──────────
     const drawResult = this.drawResultRepo.create({
       eventId,
-      vrfRequestId,
-      randomSeed,
-      drawProofTxHash,
+      vrfRequestId: vrfRequestId.toString(),
+      randomSeed: randomSeedHex,
+      drawProofTxHash: null, // 鏈上記錄稍後補填
     });
     await this.drawResultRepo.save(drawResult);
 
-    // Batch-update all entries
     await Promise.all(
       entries.map((e) =>
-        this.entryRepo.update(e.id, {
-          status: e.status,
-          drawProofTxHash,
-        }),
+        this.entryRepo.update(e.id, { status: e.status }),
       ),
     );
+
+    // ── Step 5: Record draw proof on-chain（失敗不影響抽籤結果）──
+    try {
+      const winnerWallets = await this.resolveWalletAddresses(winnerEntries);
+      const eventIdNum = parseInt(eventId.replace(/-/g, '').slice(0, 8), 16);
+
+      const drawProofTxHash = await this.blockchainService.recordDrawResult(
+        eventIdNum,
+        0, // zoneId=0 表示整場活動
+        vrfRequestId,
+        randomWord,
+        winnerWallets,
+      );
+
+      // 回填鏈上交易 hash
+      await this.drawResultRepo.update(drawResult.id, { drawProofTxHash });
+      await Promise.all(
+        entries.map((e) =>
+          this.entryRepo.update(e.id, { drawProofTxHash }),
+        ),
+      );
+
+      this.logger.log(
+        `抽籤完成 — eventId=${eventId}, 總報名=${entries.length}, ` +
+          `中籤=${winnerEntries.length}, txHash=${drawProofTxHash}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `抽籤結果已儲存但鏈上記錄失敗 eventId=${eventId}，可稍後重試`,
+        error,
+      );
+    }
 
     return this.buildDrawResultResponse(eventId);
   }
@@ -142,29 +179,6 @@ export class LotteryService {
   // ----------------------------------------------------------------
 
   /**
-   * Stub: Request randomness from Chainlink VRF on Polygon.
-   *
-   * TODO: Integrate with actual Chainlink VRF v2 coordinator contract.
-   * - Call VRFCoordinatorV2.requestRandomWords() via ethers.js
-   * - Wait for the VRF callback (fulfillRandomWords) to receive the result
-   * - Return the VRF requestId and the resulting random seed
-   */
-  private async requestVrfRandomness(): Promise<{
-    vrfRequestId: string;
-    randomSeed: string;
-  }> {
-    // TODO: Replace with real Chainlink VRF call on Polygon
-    const stubSeed = createHash('sha256')
-      .update(`vrf-stub-${Date.now()}-${Math.random()}`)
-      .digest('hex');
-
-    return {
-      vrfRequestId: `vrf-req-stub-${Date.now()}`,
-      randomSeed: `0x${stubSeed}`,
-    };
-  }
-
-  /**
    * Group lottery entries into pools keyed by "zoneId:groupSize".
    */
   private groupIntoPools(
@@ -181,27 +195,29 @@ export class LotteryService {
   }
 
   /**
-   * For a pool of entries, use keccak256-based expansion of the VRF seed
-   * to produce a deterministic sort key per entry, then mark top entries
-   * as winners. Currently selects roughly 50% of each pool as winners.
+   * 使用 keccak256 展開 VRF 種子，為每個 entry 產生確定性排序鍵，
+   * 排序後取前 N 名為中籤者。
    *
-   * The keccak256 expansion: hash(seed + poolKey + entryId) for each entry,
-   * sort ascending by hash, top N are winners.
+   * keccak256(seed, poolKey, entryId) 可在鏈上重現驗證。
    */
   private selectWinners(
     entries: LotteryEntry[],
     randomSeed: string,
     poolKey: string,
   ): void {
-    // Produce a deterministic sort key per entry via keccak256 expansion
     const sorted = entries
       .map((entry) => {
-        const sortKey = this.keccak256Expand(randomSeed, poolKey, entry.id);
+        const sortKey = keccak256(
+          solidityPacked(
+            ['string', 'string', 'string'],
+            [randomSeed, poolKey, entry.id],
+          ),
+        );
         return { entry, sortKey };
       })
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-    // Select roughly 50% as winners (configurable per event in production)
+    // 選取 50% 為中籤者（正式環境可依活動設定調整）
     const winnerCount = Math.max(1, Math.ceil(sorted.length * 0.5));
 
     sorted.forEach(({ entry }, index) => {
@@ -213,37 +229,22 @@ export class LotteryService {
   }
 
   /**
-   * keccak256 expansion: deterministic hash of (seed, poolKey, entryId).
-   *
-   * Uses SHA-256 as a stand-in. In production this should use actual
-   * keccak256 (e.g. from ethers.js) to match on-chain verification.
-   *
-   * TODO: Replace with ethers.keccak256(ethers.solidityPacked(...))
+   * 將中籤者的 userId 解析為 AA 錢包地址（用於鏈上記錄）。
+   * 若使用者尚未完成 KYC（無錢包），使用零地址佔位。
    */
-  private keccak256Expand(
-    seed: string,
-    poolKey: string,
-    entryId: string,
-  ): string {
-    // TODO: Use ethers.keccak256 for on-chain verifiable expansion
-    return createHash('sha256')
-      .update(`${seed}:${poolKey}:${entryId}`)
-      .digest('hex');
-  }
-
-  /**
-   * Stub: Publish draw proof transaction on Polygon.
-   *
-   * TODO: Integrate with smart contract to store draw proof on-chain.
-   * - Encode (eventId, randomSeed, winnerHashes) and submit via ethers.js
-   * - Return the transaction hash
-   */
-  private async publishDrawProof(
-    _eventId: string,
-    _randomSeed: string,
-  ): Promise<string> {
-    // TODO: Replace with actual on-chain transaction via ethers.js on Polygon
-    return `0x${'0'.repeat(64)}`;
+  private async resolveWalletAddresses(
+    winnerEntries: LotteryEntry[],
+  ): Promise<string[]> {
+    const addresses: string[] = [];
+    for (const entry of winnerEntries) {
+      try {
+        const kyc = await this.identityService.getKycStatus(entry.userId);
+        addresses.push(kyc.aaWalletAddress ?? '0x' + '0'.repeat(40));
+      } catch {
+        addresses.push('0x' + '0'.repeat(40));
+      }
+    }
+    return addresses;
   }
 
   /**

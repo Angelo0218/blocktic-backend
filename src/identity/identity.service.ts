@@ -1,25 +1,56 @@
 import {
   Injectable,
   BadRequestException,
-  ConflictException,
+  InternalServerErrorException,
   NotFoundException,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { createHash } from 'crypto';
+import {
+  RekognitionClient,
+  DetectFacesCommand,
+  type FaceDetail,
+} from '@aws-sdk/client-rekognition';
 import { Person, KycStatus } from './entities/person.entity';
+import { BlockchainService } from '../blockchain/blockchain.service';
 import { SubmitKycDto } from './dto/submit-kyc.dto';
 import { KycSubmitResponseDto, KycStatusResponseDto } from './dto/kyc-status.dto';
+
+/** KYC SBT attestation token ID（範圍 1–999） */
+const KYC_ATTESTATION_TOKEN_ID = 1;
 
 @Injectable()
 export class IdentityService {
   private readonly logger = new Logger(IdentityService.name);
 
+  private readonly rekognition: RekognitionClient;
+  private readonly comprefaceUrl: string;
+  private readonly verifyApiKey: string;
+  private readonly recognizeApiKey: string;
+  private readonly faceMatchThreshold: number;
+
   constructor(
     @InjectRepository(Person)
     private readonly personRepo: Repository<Person>,
-  ) {}
+    private readonly config: ConfigService,
+    private readonly blockchainService: BlockchainService,
+  ) {
+    this.rekognition = new RekognitionClient({
+      region: this.config.getOrThrow<string>('AWS_REGION'),
+      credentials: {
+        accessKeyId: this.config.getOrThrow<string>('AWS_ACCESS_KEY_ID'),
+        secretAccessKey: this.config.getOrThrow<string>('AWS_SECRET_ACCESS_KEY'),
+      },
+    });
+
+    this.comprefaceUrl = this.config.getOrThrow<string>('COMPREFACE_URL');
+    this.verifyApiKey = this.config.getOrThrow<string>('COMPREFACE_VERIFY_API_KEY');
+    this.recognizeApiKey = this.config.getOrThrow<string>('COMPREFACE_RECOGNIZE_API_KEY');
+    this.faceMatchThreshold = this.config.get<number>('FACE_MATCH_THRESHOLD', 0.85);
+  }
 
   // ──────────────────────────────────────────────
   //  Public API
@@ -39,6 +70,10 @@ export class IdentityService {
       );
     }
 
+    // 去除 data URL prefix（前端可能送 data:image/jpeg;base64,... 格式）
+    const idCardImage = this.stripDataUrlPrefix(dto.idCardImage);
+    const selfieImage = this.stripDataUrlPrefix(dto.selfieImage);
+
     // Create or retrieve person record
     let person: Person;
     if (dto.userId) {
@@ -57,7 +92,8 @@ export class IdentityService {
 
     try {
       // ── Layer 1: ID Document Uniqueness ───────────────────
-      const idHash = this.hashDocument(dto.idCardImage);
+      // 依賴 DB unique constraint 防止 race condition
+      const idHash = this.hashDocument(idCardImage);
       const duplicate = await this.personRepo.findOne({
         where: { personIdHash: idHash },
       });
@@ -71,7 +107,7 @@ export class IdentityService {
       await this.personRepo.save(person);
 
       // ── Layer 2: Liveness Detection (AWS Rekognition) ─────
-      const livenessResult = await this.detectLiveness(dto.selfieImage);
+      const livenessResult = await this.detectLiveness(selfieImage);
       if (!livenessResult.isLive) {
         person.kycStatus = KycStatus.REJECTED;
         await this.personRepo.save(person);
@@ -81,10 +117,7 @@ export class IdentityService {
       await this.personRepo.save(person);
 
       // ── Layer 3: 1:1 Face Comparison (CompreFace) ─────────
-      const faceMatchResult = await this.compareFaces(
-        dto.idCardImage,
-        dto.selfieImage,
-      );
+      const faceMatchResult = await this.compareFaces(idCardImage, selfieImage);
       if (!faceMatchResult.isMatch) {
         person.kycStatus = KycStatus.REJECTED;
         await this.personRepo.save(person);
@@ -97,10 +130,7 @@ export class IdentityService {
       await this.personRepo.save(person);
 
       // ── Layer 4: 1:N Face Deduplication (CompreFace) ──────
-      const dedupResult = await this.deduplicateFace(
-        dto.selfieImage,
-        person.id,
-      );
+      const dedupResult = await this.deduplicateFace(selfieImage, person.id);
       if (dedupResult.duplicateFound) {
         person.kycStatus = KycStatus.REJECTED;
         await this.personRepo.save(person);
@@ -113,15 +143,27 @@ export class IdentityService {
 
       // ── All layers passed ─────────────────────────────────
       person.kycStatus = KycStatus.APPROVED;
-
-      // TODO: Create ERC-4337 AA wallet and mint KYC Attestation SBT
-      // 1. Call BlockchainService.createAAWallet(person.id) → get walletAddress
-      // 2. person.aaWalletAddress = walletAddress
-      // 3. Call BlockchainService.mintKycSbt(walletAddress, kycTokenId)
-      // 4. person.kycAttestationTxHash = txHash
-      // Users never need MetaMask - platform Paymaster pays all gas fees
-
       await this.personRepo.save(person);
+
+      // ── 建立 AA 錢包 + 鑄造 KYC SBT（失敗不影響 KYC 狀態）──
+      try {
+        const wallet = await this.blockchainService.createAAWallet(person.id);
+        person.aaWalletAddress = wallet.walletAddress;
+
+        const txHash = await this.blockchainService.mintKycSbt(
+          wallet.walletAddress,
+          KYC_ATTESTATION_TOKEN_ID,
+        );
+        person.kycAttestationTxHash = txHash;
+        await this.personRepo.save(person);
+      } catch (blockchainError) {
+        // 區塊鏈操作失敗不應影響已通過的 KYC 結果，可稍後重試
+        this.logger.error(
+          `KYC 已通過但區塊鏈操作失敗 person=${person.id}，可稍後重試`,
+          blockchainError,
+        );
+      }
+
       return this.buildResponse(person, 'KYC approved. All verification layers passed.');
     } catch (error) {
       this.logger.error(`KYC verification failed for person ${person.id}`, error);
@@ -160,11 +202,10 @@ export class IdentityService {
       throw new NotFoundException(`Person with id ${userId} not found.`);
     }
 
-    // TODO: Delete face embedding from CompreFace collection
-    // await this.deleteFaceFromCompreFace(person.faceEmbeddingRef);
-
-    // TODO: Delete any stored images from object storage (S3 / MinIO)
-    // await this.deleteStoredImages(person.id);
+    // 刪除 CompreFace 中的人臉嵌入向量
+    if (person.faceEmbeddingRef) {
+      await this.deleteFaceFromCompreFace(person.faceEmbeddingRef);
+    }
 
     await this.personRepo.remove(person);
 
@@ -173,8 +214,19 @@ export class IdentityService {
   }
 
   // ──────────────────────────────────────────────
-  //  Private helpers & stubbed external calls
+  //  Private helpers
   // ──────────────────────────────────────────────
+
+  /**
+   * 去除 data URL prefix（例如 "data:image/jpeg;base64,"）。
+   */
+  private stripDataUrlPrefix(base64: string): string {
+    const commaIndex = base64.indexOf(',');
+    if (commaIndex !== -1 && base64.startsWith('data:')) {
+      return base64.slice(commaIndex + 1);
+    }
+    return base64;
+  }
 
   /**
    * SHA-256 hash of the ID document image for uniqueness checking.
@@ -184,85 +236,183 @@ export class IdentityService {
   }
 
   /**
-   * Layer 2 stub: Call AWS Rekognition DetectFaces / liveness session.
+   * Layer 2: AWS Rekognition DetectFaces — 透過人臉品質屬性判斷活體。
+   *
+   * 檢查 Confidence、Sharpness、Brightness 等指標，
+   * 照片攻擊通常會在這些品質指標上表現異常。
    */
   private async detectLiveness(
-    _selfieBase64: string,
+    selfieBase64: string,
   ): Promise<{ isLive: boolean; confidence: number }> {
-    // TODO: Integrate AWS Rekognition Face Liveness
-    //
-    // Implementation outline:
-    //   1. Create a Rekognition liveness session via CreateFaceLivenessSession
-    //   2. Submit selfie frames to the session
-    //   3. Retrieve session results via GetFaceLivenessSessionResults
-    //   4. Check Confidence >= threshold (e.g. 90)
-    //
-    // const client = new RekognitionClient({ region: 'ap-northeast-1' });
-    // const result = await client.send(new GetFaceLivenessSessionResultsCommand({ SessionId }));
-    // return { isLive: result.Confidence >= 90, confidence: result.Confidence };
+    const imageBuffer = Buffer.from(selfieBase64, 'base64');
 
-    this.logger.warn('Liveness detection is STUBBED — always returns true');
-    return { isLive: true, confidence: 99.5 };
+    const command = new DetectFacesCommand({
+      Image: { Bytes: imageBuffer },
+      Attributes: ['ALL'],
+    });
+
+    const response = await this.rekognition.send(command);
+    const faces = response.FaceDetails ?? [];
+
+    if (faces.length === 0) {
+      this.logger.warn('活體偵測：未偵測到任何人臉');
+      return { isLive: false, confidence: 0 };
+    }
+
+    if (faces.length > 1) {
+      this.logger.warn(`活體偵測：偵測到 ${faces.length} 張人臉，預期 1 張`);
+      return { isLive: false, confidence: 0 };
+    }
+
+    const face: FaceDetail = faces[0];
+    const confidence = face.Confidence ?? 0;
+    const sharpness = face.Quality?.Sharpness ?? 0;
+    const brightness = face.Quality?.Brightness ?? 0;
+
+    // 眼睛張開檢查（防靜態照片）
+    const eyesOpen = face.EyesOpen?.Value === true && (face.EyesOpen?.Confidence ?? 0) > 80;
+
+    const isLive =
+      confidence > 90 &&
+      sharpness > 30 &&
+      brightness > 20 &&
+      eyesOpen;
+
+    this.logger.log(
+      `活體偵測結果 — confidence=${confidence.toFixed(1)}, ` +
+        `sharpness=${sharpness.toFixed(1)}, brightness=${brightness.toFixed(1)}, ` +
+        `eyesOpen=${eyesOpen}, isLive=${isLive}`,
+    );
+
+    return { isLive, confidence };
   }
 
   /**
-   * Layer 3 stub: 1:1 face comparison via CompreFace Verification API.
+   * Layer 3: CompreFace 1:1 人臉比對 — 證件照 vs 自拍照。
+   *
+   * 呼叫 CompreFace Verification API 比對兩張照片的相似度。
    */
   private async compareFaces(
-    _idCardBase64: string,
-    _selfieBase64: string,
+    idCardBase64: string,
+    selfieBase64: string,
   ): Promise<{ isMatch: boolean; similarity: number }> {
-    // TODO: Integrate CompreFace Verification Service
-    //
-    // Implementation outline:
-    //   1. POST /api/v1/verification/verify with source_image & target_image
-    //   2. Parse the similarity score from the response
-    //   3. Return match if similarity >= threshold (e.g. 0.95)
-    //
-    // const response = await axios.post(`${COMPREFACE_URL}/api/v1/verification/verify`, formData, {
-    //   headers: { 'x-api-key': COMPREFACE_VERIFY_API_KEY },
-    // });
-    // const similarity = response.data.result[0].face_matches[0].similarity;
-    // return { isMatch: similarity >= 0.95, similarity };
+    const formData = new FormData();
+    formData.append('source_image', new Blob([Buffer.from(idCardBase64, 'base64')]), 'id.jpg');
+    formData.append('target_image', new Blob([Buffer.from(selfieBase64, 'base64')]), 'selfie.jpg');
 
-    this.logger.warn('Face comparison is STUBBED — always returns match');
-    return { isMatch: true, similarity: 0.98 };
+    const response = await fetch(
+      `${this.comprefaceUrl}/api/v1/verification/verify`,
+      {
+        method: 'POST',
+        headers: { 'x-api-key': this.verifyApiKey },
+        body: formData,
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      this.logger.error(`CompreFace 1:1 比對失敗 — status=${response.status}, body=${body}`);
+      throw new InternalServerErrorException('Face comparison service unavailable.');
+    }
+
+    const data = await response.json() as {
+      result: Array<{ face_matches: Array<{ similarity: number }> }>;
+    };
+
+    const similarity = data.result?.[0]?.face_matches?.[0]?.similarity ?? 0;
+    const isMatch = similarity >= this.faceMatchThreshold;
+
+    this.logger.log(`1:1 人臉比對 — similarity=${similarity.toFixed(3)}, isMatch=${isMatch}`);
+    return { isMatch, similarity };
   }
 
   /**
-   * Layer 4 stub: 1:N face deduplication via CompreFace Recognition API.
+   * Layer 4: CompreFace 1:N 人臉去重 — 防止一人多帳號。
+   *
+   * 先用 Recognition API 搜尋是否已有相似人臉，若無重複則註冊新人臉。
    */
   private async deduplicateFace(
-    _selfieBase64: string,
+    selfieBase64: string,
     personId: string,
   ): Promise<{ duplicateFound: boolean; subjectId: string }> {
-    // TODO: Integrate CompreFace Recognition Service
-    //
-    // Implementation outline:
-    //   1. POST /api/v1/recognition/recognize to search existing faces
-    //   2. If a match is found with similarity >= threshold, it's a duplicate
-    //   3. If no duplicate, add face: POST /api/v1/recognition/faces with subject=personId
-    //   4. Return the subject ID (face embedding reference)
-    //
-    // const recognizeResp = await axios.post(
-    //   `${COMPREFACE_URL}/api/v1/recognition/recognize`,
-    //   formData,
-    //   { headers: { 'x-api-key': COMPREFACE_RECOGNITION_API_KEY } },
-    // );
-    // const topMatch = recognizeResp.data.result?.[0]?.subjects?.[0];
-    // if (topMatch && topMatch.similarity >= 0.95) {
-    //   return { duplicateFound: true, subjectId: topMatch.subject };
-    // }
-    // // No duplicate — register the face
-    // await axios.post(
-    //   `${COMPREFACE_URL}/api/v1/recognition/faces?subject=${personId}`,
-    //   formData,
-    //   { headers: { 'x-api-key': COMPREFACE_RECOGNITION_API_KEY } },
-    // );
-    // return { duplicateFound: false, subjectId: personId };
+    const imageBuffer = Buffer.from(selfieBase64, 'base64');
 
-    this.logger.warn('Face deduplication is STUBBED — always returns no duplicate');
+    // Step 1: 搜尋現有人臉集合中是否有重複
+    const recognizeForm = new FormData();
+    recognizeForm.append('file', new Blob([imageBuffer]), 'selfie.jpg');
+
+    const recognizeResp = await fetch(
+      `${this.comprefaceUrl}/api/v1/recognition/recognize`,
+      {
+        method: 'POST',
+        headers: { 'x-api-key': this.recognizeApiKey },
+        body: recognizeForm,
+      },
+    );
+
+    // CompreFace 人臉集合為空時回傳 400，此為預期行為（第一位使用者）
+    // 其他非成功回應視為服務異常，應中斷流程
+    if (!recognizeResp.ok && recognizeResp.status !== 400) {
+      const body = await recognizeResp.text();
+      this.logger.error(`CompreFace 辨識服務異常 — status=${recognizeResp.status}, body=${body}`);
+      throw new InternalServerErrorException('Face recognition service unavailable.');
+    }
+
+    if (recognizeResp.ok) {
+      const recognizeData = await recognizeResp.json() as {
+        result: Array<{ subjects: Array<{ subject: string; similarity: number }> }>;
+      };
+
+      const topMatch = recognizeData.result?.[0]?.subjects?.[0];
+      if (topMatch && topMatch.similarity >= this.faceMatchThreshold) {
+        this.logger.warn(
+          `人臉去重：發現重複 — 匹配 subject=${topMatch.subject}, ` +
+            `similarity=${topMatch.similarity.toFixed(3)}`,
+        );
+        return { duplicateFound: true, subjectId: topMatch.subject };
+      }
+    }
+
+    // Step 2: 無重複 → 註冊新人臉
+    const addForm = new FormData();
+    addForm.append('file', new Blob([imageBuffer]), 'selfie.jpg');
+
+    const addResp = await fetch(
+      `${this.comprefaceUrl}/api/v1/recognition/faces?subject=${encodeURIComponent(personId)}`,
+      {
+        method: 'POST',
+        headers: { 'x-api-key': this.recognizeApiKey },
+        body: addForm,
+      },
+    );
+
+    if (!addResp.ok) {
+      const body = await addResp.text();
+      this.logger.error(`CompreFace 人臉註冊失敗 — status=${addResp.status}, body=${body}`);
+      throw new InternalServerErrorException('Face registration service unavailable.');
+    }
+
+    this.logger.log(`人臉已註冊 — subject=${personId}`);
     return { duplicateFound: false, subjectId: personId };
+  }
+
+  /**
+   * 從 CompreFace 刪除人臉嵌入（GDPR 資料刪除）。
+   */
+  private async deleteFaceFromCompreFace(subjectId: string): Promise<void> {
+    const resp = await fetch(
+      `${this.comprefaceUrl}/api/v1/recognition/faces?subject=${encodeURIComponent(subjectId)}`,
+      {
+        method: 'DELETE',
+        headers: { 'x-api-key': this.recognizeApiKey },
+      },
+    );
+
+    if (!resp.ok) {
+      this.logger.warn(`CompreFace 人臉刪除失敗 — subject=${subjectId}, status=${resp.status}`);
+    } else {
+      this.logger.log(`CompreFace 人臉已刪除 — subject=${subjectId}`);
+    }
   }
 
   private buildResponse(person: Person, message: string): KycSubmitResponseDto {

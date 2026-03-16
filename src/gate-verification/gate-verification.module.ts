@@ -7,9 +7,11 @@ import { GateVerificationService } from './gate-verification.service';
 import { GateLog } from './entities/gate-log.entity';
 import { Ticket } from '../ticketing/entities/ticket.entity';
 import { Person } from '../identity/entities/person.entity';
+import { BlockchainModule } from '../blockchain/blockchain.module';
 
 @Module({
   imports: [
+    ConfigModule,
     TypeOrmModule.forFeature([GateLog, Ticket, Person]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -21,6 +23,7 @@ import { Person } from '../identity/entities/person.entity';
         verifyOptions: { algorithms: ['RS256'] },
       }),
     }),
+    BlockchainModule,
   ],
   controllers: [GateVerificationController],
   providers: [GateVerificationService],
