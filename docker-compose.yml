@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ── NestJS Backend (dev mode with hot-reload) ──
   backend:
@@ -37,7 +35,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD-EXEC", "pg_isready -U blocktic"]
+      test: ["CMD-SHELL", "pg_isready -U blocktic"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -68,7 +66,7 @@ services:
     volumes:
       - cf-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-EXEC", "pg_isready -U compreface -d frs"]
+      test: ["CMD-SHELL", "pg_isready -U compreface -d frs"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -125,13 +123,16 @@ services:
 
   # ── CompreFace UI（前端管理頁面）──
   compreface-ui:
-    image: exadel/compreface-ui:1.2.0
+    image: exadel/compreface-fe:1.2.0
     depends_on:
       - compreface-api
       - compreface-admin
     environment:
       API_HOST: http://compreface-api:8000
       ADMIN_HOST: http://compreface-admin:8001
+      CLIENT_MAX_BODY_SIZE: "10M"
+      PROXY_READ_TIMEOUT: "60s"
+      PROXY_CONNECT_TIMEOUT: "60s"
     ports:
       - "8002:80"
     restart: unless-stopped
