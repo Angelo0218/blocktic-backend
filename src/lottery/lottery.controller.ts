@@ -5,6 +5,7 @@ import {
   Param,
   Body,
   ParseUUIDPipe,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -20,6 +21,10 @@ import {
   DrawProofResponseDto,
 } from './dto/draw-result.dto';
 import { LotteryEntry } from './entities/lottery-entry.entity';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles, Role } from '../common/decorators/roles.decorator';
 
 @ApiTags('Lottery')
 @ApiBearerAuth()
@@ -28,20 +33,22 @@ export class LotteryController {
   constructor(private readonly lotteryService: LotteryService) {}
 
   @Post(':eventId/register')
+  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Register for event lottery' })
   @ApiParam({ name: 'eventId', type: 'string', format: 'uuid' })
   @ApiResponse({ status: 201, description: 'Registration successful', type: LotteryEntry })
   @ApiResponse({ status: 409, description: 'User already registered' })
   async register(
     @Param('eventId', ParseUUIDPipe) eventId: string,
+    @CurrentUser('sub') userId: string,
     @Body() dto: RegisterLotteryDto,
   ): Promise<LotteryEntry> {
-    // TODO: Extract userId from JWT / auth guard
-    const userId = '00000000-0000-0000-0000-000000000000';
     return this.lotteryService.register(eventId, userId, dto);
   }
 
   @Post(':eventId/draw')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Trigger lottery draw (admin only)' })
   @ApiParam({ name: 'eventId', type: 'string', format: 'uuid' })
   @ApiResponse({ status: 201, description: 'Draw executed', type: DrawResultResponseDto })
@@ -50,7 +57,6 @@ export class LotteryController {
   async draw(
     @Param('eventId', ParseUUIDPipe) eventId: string,
   ): Promise<DrawResultResponseDto> {
-    // TODO: Add admin role guard
     return this.lotteryService.draw(eventId);
   }
 

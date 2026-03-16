@@ -10,6 +10,7 @@ import { TicketingModule } from './ticketing/ticketing.module';
 import { GateVerificationModule } from './gate-verification/gate-verification.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { AuditModule } from './audit/audit.module';
+import { AuthModule } from './auth/auth.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -41,6 +42,7 @@ import { AppService } from './app.service';
       }),
     }),
     ScheduleModule.forRoot(),
+    AuthModule,
     IdentityModule,
     LotteryModule,
     SeatAllocationModule,
