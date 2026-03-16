@@ -1,23 +1,26 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBase64, IsNotEmpty, IsString, IsOptional, IsBoolean } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, IsBoolean, MaxLength } from 'class-validator';
+
+/** 10MB 圖片的 base64 約 13.3M 字元 */
+const MAX_IMAGE_LENGTH = 14_000_000;
 
 export class SubmitKycDto {
   @ApiProperty({
-    description: 'Base64-encoded ID card / document image',
-    example: 'data:image/jpeg;base64,/9j/4AAQ...',
+    description: 'Base64-encoded ID card / document image (max 10MB)',
+    example: '/9j/4AAQ...',
   })
   @IsString()
   @IsNotEmpty()
-  @IsBase64()
+  @MaxLength(MAX_IMAGE_LENGTH)
   idCardImage: string;
 
   @ApiProperty({
-    description: 'Base64-encoded selfie image for liveness & face comparison',
-    example: 'data:image/jpeg;base64,/9j/4AAQ...',
+    description: 'Base64-encoded selfie image for liveness & face comparison (max 10MB)',
+    example: '/9j/4AAQ...',
   })
   @IsString()
   @IsNotEmpty()
-  @IsBase64()
+  @MaxLength(MAX_IMAGE_LENGTH)
   selfieImage: string;
 
   @ApiProperty({

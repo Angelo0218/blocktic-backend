@@ -15,6 +15,7 @@ import { BlockchainService } from '../blockchain/blockchain.service';
 import { SeatAllocationService } from '../seat-allocation/seat-allocation.service';
 import { IdentityService } from '../identity/identity.service';
 import { generateCheckMacValue } from './ecpay.util';
+import { fetchWithTimeout } from '../common/utils/fetch-with-timeout';
 
 /** 票券 SBT token ID 起始值（1000+，1–999 保留給 KYC） */
 const TICKET_TOKEN_ID_BASE = 1000;
@@ -353,7 +354,7 @@ export class TicketingService {
       this.ecpayHashIV,
     );
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${this.ecpayApiUrl}/CreditDetail/DoAction`,
       {
         method: 'POST',

@@ -18,6 +18,7 @@ import { Person, KycStatus } from './entities/person.entity';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { SubmitKycDto } from './dto/submit-kyc.dto';
 import { KycSubmitResponseDto, KycStatusResponseDto } from './dto/kyc-status.dto';
+import { fetchWithTimeout } from '../common/utils/fetch-with-timeout';
 
 /** KYC SBT attestation token ID（範圍 1–999） */
 const KYC_ATTESTATION_TOKEN_ID = 1;
@@ -31,6 +32,9 @@ export class IdentityService {
   private readonly verifyApiKey: string;
   private readonly recognizeApiKey: string;
   private readonly faceMatchThreshold: number;
+  private readonly livenessConfidenceThreshold: number;
+  private readonly livenessSharpnessThreshold: number;
+  private readonly livenessBrightnessThreshold: number;
 
   constructor(
     @InjectRepository(Person)
@@ -52,6 +56,9 @@ export class IdentityService {
     this.verifyApiKey = this.config.get<string>('COMPREFACE_VERIFY_API_KEY', '');
     this.recognizeApiKey = this.config.get<string>('COMPREFACE_RECOGNIZE_API_KEY', '');
     this.faceMatchThreshold = this.config.get<number>('FACE_MATCH_THRESHOLD', 0.85);
+    this.livenessConfidenceThreshold = this.config.get<number>('LIVENESS_CONFIDENCE_THRESHOLD', 90);
+    this.livenessSharpnessThreshold = this.config.get<number>('LIVENESS_SHARPNESS_THRESHOLD', 30);
+    this.livenessBrightnessThreshold = this.config.get<number>('LIVENESS_BRIGHTNESS_THRESHOLD', 20);
   }
 
   // ──────────────────────────────────────────────
@@ -280,9 +287,9 @@ export class IdentityService {
     const eyesOpen = face.EyesOpen?.Value === true && (face.EyesOpen?.Confidence ?? 0) > 80;
 
     const isLive =
-      confidence > 90 &&
-      sharpness > 30 &&
-      brightness > 20 &&
+      confidence > this.livenessConfidenceThreshold &&
+      sharpness > this.livenessSharpnessThreshold &&
+      brightness > this.livenessBrightnessThreshold &&
       eyesOpen;
 
     this.logger.log(
@@ -307,7 +314,7 @@ export class IdentityService {
     formData.append('source_image', new Blob([Buffer.from(idCardBase64, 'base64')]), 'id.jpg');
     formData.append('target_image', new Blob([Buffer.from(selfieBase64, 'base64')]), 'selfie.jpg');
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${this.comprefaceUrl}/api/v1/verification/verify`,
       {
         method: 'POST',
@@ -348,7 +355,7 @@ export class IdentityService {
     const recognizeForm = new FormData();
     recognizeForm.append('file', new Blob([imageBuffer]), 'selfie.jpg');
 
-    const recognizeResp = await fetch(
+    const recognizeResp = await fetchWithTimeout(
       `${this.comprefaceUrl}/api/v1/recognition/recognize`,
       {
         method: 'POST',
@@ -384,7 +391,7 @@ export class IdentityService {
     const addForm = new FormData();
     addForm.append('file', new Blob([imageBuffer]), 'selfie.jpg');
 
-    const addResp = await fetch(
+    const addResp = await fetchWithTimeout(
       `${this.comprefaceUrl}/api/v1/recognition/faces?subject=${encodeURIComponent(personId)}`,
       {
         method: 'POST',
@@ -407,7 +414,7 @@ export class IdentityService {
    * 從 CompreFace 刪除人臉嵌入（GDPR 資料刪除）。
    */
   private async deleteFaceFromCompreFace(subjectId: string): Promise<void> {
-    const resp = await fetch(
+    const resp = await fetchWithTimeout(
       `${this.comprefaceUrl}/api/v1/recognition/faces?subject=${encodeURIComponent(subjectId)}`,
       {
         method: 'DELETE',

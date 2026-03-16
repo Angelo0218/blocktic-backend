@@ -3,6 +3,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { IdentityModule } from './identity/identity.module';
 import { LotteryModule } from './lottery/lottery.module';
 import { SeatAllocationModule } from './seat-allocation/seat-allocation.module';
@@ -42,6 +44,10 @@ import { AppService } from './app.service';
       }),
     }),
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([{
+      ttl: 60_000,   // 60 秒
+      limit: 60,     // 每 IP 最多 60 次
+    }]),
     AuthModule,
     IdentityModule,
     LotteryModule,
@@ -52,6 +58,9 @@ import { AppService } from './app.service';
     AuditModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
 export class AppModule {}

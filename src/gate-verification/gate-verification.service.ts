@@ -17,6 +17,7 @@ import { GateLog, VerificationMode, VerificationResult } from './entities/gate-l
 import { Ticket, TicketStatus } from '../ticketing/entities/ticket.entity';
 import { Person } from '../identity/entities/person.entity';
 import { BlockchainService } from '../blockchain/blockchain.service';
+import { fetchWithTimeout } from '../common/utils/fetch-with-timeout';
 
 interface QrPayload {
   sub: string; // ticketId
@@ -336,7 +337,7 @@ export class GateVerificationService {
     const formData = new FormData();
     formData.append('file', new Blob([imageBuffer]), 'gate-face.jpg');
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${this.comprefaceUrl}/api/v1/recognition/recognize`,
       {
         method: 'POST',
