@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { Event } from './entities/event.entity';
 import { Zone } from './entities/zone.entity';
 import { CreateEventDto } from './dto/create-event.dto';
@@ -14,6 +14,7 @@ export class EventsService {
     private readonly eventRepo: Repository<Event>,
     @InjectRepository(Zone)
     private readonly zoneRepo: Repository<Zone>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(dto: CreateEventDto): Promise<Event> {
@@ -52,17 +53,23 @@ export class EventsService {
   }
 
   async update(id: string, dto: UpdateEventDto): Promise<Event> {
-    const event = await this.findOne(id);
+    return this.dataSource.transaction(async (manager) => {
+      const event = await manager.findOne(Event, {
+        where: { id },
+        relations: ['zones'],
+      });
+      if (!event) throw new NotFoundException('活動不存在');
 
-    if (dto.zones) {
-      await this.zoneRepo.delete({ eventId: id });
-      event.zones = dto.zones.map((z) =>
-        this.zoneRepo.create({ ...z, eventId: id }),
-      );
-    }
+      if (dto.zones) {
+        await manager.delete(Zone, { eventId: id });
+        event.zones = dto.zones.map((z) =>
+          manager.create(Zone, { ...z, eventId: id }),
+        );
+      }
 
-    Object.assign(event, { ...dto, zones: event.zones });
-    return this.eventRepo.save(event);
+      Object.assign(event, { ...dto, zones: event.zones });
+      return manager.save(Event, event);
+    });
   }
 
   async remove(id: string): Promise<void> {
