@@ -9,7 +9,7 @@ import {
   HttpStatus,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBearerAuth } from '@nestjs/swagger';
 import { GateVerificationService } from './gate-verification.service';
 import { GenerateQrDto } from './dto/generate-qr.dto';
 import { VerifyEntryDto, FallbackVerifyDto } from './dto/verify-entry.dto';
@@ -72,6 +72,7 @@ export class GateVerificationController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Get entry verification statistics for an event (admin)' })
+  @ApiParam({ name: 'eventId', type: 'string', format: 'uuid' })
   @ApiResponse({ status: 200, description: 'Entry statistics returned' })
   async getStats(@Param('eventId', ParseUUIDPipe) eventId: string) {
     return this.gateVerificationService.getEntryStats(eventId);
