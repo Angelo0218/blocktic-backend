@@ -29,7 +29,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '發送 OTP 驗證碼至手機' })
   @ApiResponse({ status: 200, description: 'OTP 已發送' })
-  async sendOtp(@Body() dto: SendOtpDto): Promise<{ message: string }> {
+  sendOtp(@Body() dto: SendOtpDto): { message: string } {
     return this.authService.sendOtp(dto);
   }
 
@@ -49,10 +49,7 @@ export class AuthController {
   @ApiResponse({ status: 200, description: '註冊完成' })
   @ApiResponse({ status: 409, description: '使用者已完成註冊' })
   @HttpCode(HttpStatus.OK)
-  async register(
-    @CurrentUser('sub') userId: string,
-    @Body() dto: RegisterDto,
-  ) {
+  async register(@CurrentUser('sub') userId: string, @Body() dto: RegisterDto) {
     return this.authService.register(userId, dto);
   }
 }

@@ -25,7 +25,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async sendOtp(dto: SendOtpDto): Promise<{ message: string }> {
+  sendOtp(dto: SendOtpDto): { message: string } {
     this.logger.log(`[Mock OTP] 發送 OTP 至 ${dto.phone}，驗證碼：${MOCK_OTP}`);
     return { message: 'OTP 已發送' };
   }

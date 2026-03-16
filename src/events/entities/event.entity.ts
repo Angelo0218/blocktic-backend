@@ -6,7 +6,7 @@ import {
   UpdateDateColumn,
   OneToMany,
 } from 'typeorm';
-import { ApiProperty } from '@nestjs/swagger';
+
 import { Zone } from './zone.entity';
 
 export enum EventStatus {
@@ -53,7 +53,11 @@ export class Event {
   @Column({ type: 'enum', enum: EventStatus, default: EventStatus.DRAFT })
   status: EventStatus;
 
-  @Column({ type: 'enum', enum: VerificationMode, default: VerificationMode.NORMAL })
+  @Column({
+    type: 'enum',
+    enum: VerificationMode,
+    default: VerificationMode.NORMAL,
+  })
   verificationMode: VerificationMode;
 
   @Column({ type: 'varchar', length: 100, nullable: true })

@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Event } from './entities/event.entity';
@@ -27,7 +24,9 @@ export class EventsService {
     return this.eventRepo.save(event);
   }
 
-  async findAll(query: EventQueryDto): Promise<{ data: Event[]; total: number }> {
+  async findAll(
+    query: EventQueryDto,
+  ): Promise<{ data: Event[]; total: number }> {
     const { page = 1, limit = 20, status } = query;
     const where: Record<string, any> = {};
     if (status) where.status = status;
@@ -57,7 +56,9 @@ export class EventsService {
 
     if (dto.zones) {
       await this.zoneRepo.delete({ eventId: id });
-      event.zones = dto.zones.map((z) => this.zoneRepo.create({ ...z, eventId: id }));
+      event.zones = dto.zones.map((z) =>
+        this.zoneRepo.create({ ...z, eventId: id }),
+      );
     }
 
     Object.assign(event, { ...dto, zones: event.zones });

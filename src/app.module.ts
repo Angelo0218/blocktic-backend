@@ -13,6 +13,8 @@ import { GateVerificationModule } from './gate-verification/gate-verification.mo
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { EventsModule } from './events/events.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -44,10 +46,12 @@ import { AppService } from './app.service';
       }),
     }),
     ScheduleModule.forRoot(),
-    ThrottlerModule.forRoot([{
-      ttl: 60_000,   // 60 秒
-      limit: 60,     // 每 IP 最多 60 次
-    }]),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60_000, // 60 秒
+        limit: 60, // 每 IP 最多 60 次
+      },
+    ]),
     AuthModule,
     IdentityModule,
     LotteryModule,
@@ -56,11 +60,10 @@ import { AppService } from './app.service';
     GateVerificationModule,
     BlockchainModule,
     AuditModule,
+    EventsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
-  providers: [
-    AppService,
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
-  ],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

@@ -1,5 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsNumber, Min, Max, MaxLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsNumber,
+  IsInt,
+  Min,
+  Max,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateZoneDto {
   @ApiProperty({ description: '票區名稱', example: 'VIP' })
@@ -9,7 +17,7 @@ export class CreateZoneDto {
   name: string;
 
   @ApiProperty({ description: '票價 TWD', example: 3000, minimum: 0 })
-  @IsNumber()
+  @IsInt()
   @Min(0)
   price: number;
 
@@ -20,7 +28,7 @@ export class CreateZoneDto {
   depositRate: number;
 
   @ApiProperty({ description: '該區總座位數', example: 500 })
-  @IsNumber()
+  @IsInt()
   @Min(1)
   totalSeats: number;
 }

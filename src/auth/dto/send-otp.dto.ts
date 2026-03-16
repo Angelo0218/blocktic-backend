@@ -8,6 +8,8 @@ export class SendOtpDto {
   })
   @IsNotEmpty()
   @IsString()
-  @Matches(/^09\d{8}$/, { message: '手機號碼格式錯誤，需為 09 開頭的 10 碼數字' })
+  @Matches(/^09\d{8}$/, {
+    message: '手機號碼格式錯誤，需為 09 開頭的 10 碼數字',
+  })
   phone: string;
 }

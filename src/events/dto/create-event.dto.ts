@@ -32,19 +32,31 @@ export class CreateEventDto {
   @MaxLength(500)
   coverImage?: string;
 
-  @ApiProperty({ description: '開演時間', example: '2026-05-01T19:00:00+08:00' })
+  @ApiProperty({
+    description: '開演時間',
+    example: '2026-05-01T19:00:00+08:00',
+  })
   @IsDateString()
   startTime: string;
 
-  @ApiProperty({ description: '結束時間', example: '2026-05-01T22:00:00+08:00' })
+  @ApiProperty({
+    description: '結束時間',
+    example: '2026-05-01T22:00:00+08:00',
+  })
   @IsDateString()
   endTime: string;
 
-  @ApiProperty({ description: '報名開始', example: '2026-04-01T00:00:00+08:00' })
+  @ApiProperty({
+    description: '報名開始',
+    example: '2026-04-01T00:00:00+08:00',
+  })
   @IsDateString()
   registrationStart: string;
 
-  @ApiProperty({ description: '報名截止', example: '2026-04-15T23:59:59+08:00' })
+  @ApiProperty({
+    description: '報名截止',
+    example: '2026-04-15T23:59:59+08:00',
+  })
   @IsDateString()
   registrationEnd: string;
 
