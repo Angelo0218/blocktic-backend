@@ -33,23 +33,46 @@ export class BlockchainService implements OnModuleInit {
 
   constructor(private readonly config: ConfigService) {}
 
+  private initialized = false;
+
   onModuleInit() {
     const rpcUrl = this.config.getOrThrow<string>('POLYGON_RPC_URL');
-    const privateKey = this.config.getOrThrow<string>('POLYGON_PRIVATE_KEY');
+    const privateKey = this.config.get<string>('POLYGON_PRIVATE_KEY');
     const sbtAddress = this.config.getOrThrow<string>('SBT_CONTRACT_ADDRESS');
     const factoryAddress = this.config.getOrThrow<string>('WALLET_FACTORY_ADDRESS');
     const vrfConsumerAddress = this.config.getOrThrow<string>('VRF_COORDINATOR_ADDRESS');
 
-    this.provider = new JsonRpcProvider(rpcUrl);
-    this.signer = new Wallet(privateKey, this.provider);
+    // 開發環境下 private key 可能是 placeholder，跳過初始化
+    if (!privateKey || privateKey.startsWith('your-')) {
+      this.logger.warn(
+        '區塊鏈服務未初始化 — POLYGON_PRIVATE_KEY 未設定。鏈上操作將不可用。',
+      );
+      return;
+    }
 
-    this.sbtContract = new Contract(sbtAddress, BLOCK_TIC_SBT_ABI, this.signer);
-    this.factoryContract = new Contract(factoryAddress, SIMPLE_ACCOUNT_FACTORY_ABI, this.provider);
-    this.vrfConsumerContract = new Contract(vrfConsumerAddress, VRF_CONSUMER_ABI, this.signer);
+    try {
+      this.provider = new JsonRpcProvider(rpcUrl);
+      this.signer = new Wallet(privateKey, this.provider);
+      this.sbtContract = new Contract(sbtAddress, BLOCK_TIC_SBT_ABI, this.signer);
+      this.factoryContract = new Contract(factoryAddress, SIMPLE_ACCOUNT_FACTORY_ABI, this.provider);
+      this.vrfConsumerContract = new Contract(vrfConsumerAddress, VRF_CONSUMER_ABI, this.signer);
+      this.initialized = true;
 
-    this.logger.log(
-      `區塊鏈服務初始化完成 — Deployer: ${this.signer.address}`,
-    );
+      this.logger.log(
+        `區塊鏈服務初始化完成 — Deployer: ${this.signer.address}`,
+      );
+    } catch (error) {
+      this.logger.warn(`區塊鏈服務初始化失敗 — ${error.message}。鏈上操作將不可用。`);
+    }
+  }
+
+  /** 確認區塊鏈服務已初始化，否則拋出錯誤。 */
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      throw new InternalServerErrorException(
+        '區塊鏈服務未初始化 — 請設定 POLYGON_PRIVATE_KEY 環境變數。',
+      );
+    }
   }
 
   /**
@@ -61,6 +84,7 @@ export class BlockchainService implements OnModuleInit {
    * @param userId - 平台使用者 ID，用於產生確定性 salt
    */
   async createAAWallet(userId: string): Promise<WalletResponseDto> {
+    this.ensureInitialized();
     const salt = BigInt(keccak256(solidityPacked(['string'], [userId])));
 
     // 注意：不能直接呼叫 factoryContract.getAddress()，因為會與 Contract 內建方法衝突
@@ -89,6 +113,7 @@ export class BlockchainService implements OnModuleInit {
    * @returns 交易 hash
    */
   async mintKycSbt(walletAddress: string, kycTokenId: number): Promise<string> {
+    this.ensureInitialized();
     return this.sendContractTx(
       '鑄造 KYC SBT',
       () => this.sbtContract.mint(walletAddress, kycTokenId, 1),
@@ -106,6 +131,7 @@ export class BlockchainService implements OnModuleInit {
    * @returns 交易 hash
    */
   async mintTicketSbt(walletAddress: string, ticketTokenId: number): Promise<string> {
+    this.ensureInitialized();
     return this.sendContractTx(
       '鑄造票券 SBT',
       () => this.sbtContract.mint(walletAddress, ticketTokenId, 1),
@@ -122,6 +148,7 @@ export class BlockchainService implements OnModuleInit {
    * @returns 交易 hash
    */
   async burnTicketSbt(walletAddress: string, ticketTokenId: number): Promise<string> {
+    this.ensureInitialized();
     return this.sendContractTx(
       '銷毀票券 SBT',
       () => this.sbtContract.burn(walletAddress, ticketTokenId, 1),
@@ -148,6 +175,7 @@ export class BlockchainService implements OnModuleInit {
     randomSeed: bigint,
     winners: string[],
   ): Promise<string> {
+    this.ensureInitialized();
     return this.sendContractTx(
       `記錄抽籤結果 eventId=${eventId}`,
       () => this.sbtContract.recordDraw(eventId, zoneId, vrfRequestId, randomSeed, winners),
@@ -165,6 +193,7 @@ export class BlockchainService implements OnModuleInit {
    * @returns 是否持有該 token
    */
   async verifySbtOwnership(walletAddress: string, tokenId: number): Promise<boolean> {
+    this.ensureInitialized();
     const balance: bigint = await this.sbtContract.balanceOf(walletAddress, tokenId);
     return balance > 0n;
   }
@@ -182,6 +211,7 @@ export class BlockchainService implements OnModuleInit {
     maxWaitMs = 120_000,
     pollIntervalMs = 5_000,
   ): Promise<{ vrfRequestId: bigint; randomWord: bigint }> {
+    this.ensureInitialized();
     this.logger.log('VRF 隨機數請求 — 發送交易中...');
 
     const tx = await this.vrfConsumerContract.requestRandomWords();

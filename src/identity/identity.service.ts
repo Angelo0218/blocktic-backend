@@ -38,17 +38,19 @@ export class IdentityService {
     private readonly config: ConfigService,
     private readonly blockchainService: BlockchainService,
   ) {
-    this.rekognition = new RekognitionClient({
-      region: this.config.getOrThrow<string>('AWS_REGION'),
-      credentials: {
-        accessKeyId: this.config.getOrThrow<string>('AWS_ACCESS_KEY_ID'),
-        secretAccessKey: this.config.getOrThrow<string>('AWS_SECRET_ACCESS_KEY'),
-      },
-    });
+    const awsKey = this.config.get<string>('AWS_ACCESS_KEY_ID', '');
+    const awsSecret = this.config.get<string>('AWS_SECRET_ACCESS_KEY', '');
 
-    this.comprefaceUrl = this.config.getOrThrow<string>('COMPREFACE_URL');
-    this.verifyApiKey = this.config.getOrThrow<string>('COMPREFACE_VERIFY_API_KEY');
-    this.recognizeApiKey = this.config.getOrThrow<string>('COMPREFACE_RECOGNIZE_API_KEY');
+    if (awsKey && !awsKey.startsWith('your-')) {
+      this.rekognition = new RekognitionClient({
+        region: this.config.get<string>('AWS_REGION', 'ap-northeast-1'),
+        credentials: { accessKeyId: awsKey, secretAccessKey: awsSecret },
+      });
+    }
+
+    this.comprefaceUrl = this.config.get<string>('COMPREFACE_URL', 'http://compreface-api:8000');
+    this.verifyApiKey = this.config.get<string>('COMPREFACE_VERIFY_API_KEY', '');
+    this.recognizeApiKey = this.config.get<string>('COMPREFACE_RECOGNIZE_API_KEY', '');
     this.faceMatchThreshold = this.config.get<number>('FACE_MATCH_THRESHOLD', 0.85);
   }
 
@@ -244,6 +246,11 @@ export class IdentityService {
   private async detectLiveness(
     selfieBase64: string,
   ): Promise<{ isLive: boolean; confidence: number }> {
+    if (!this.rekognition) {
+      this.logger.warn('AWS Rekognition 未設定 — 活體偵測跳過（開發模式）');
+      return { isLive: true, confidence: 0 };
+    }
+
     const imageBuffer = Buffer.from(selfieBase64, 'base64');
 
     const command = new DetectFacesCommand({

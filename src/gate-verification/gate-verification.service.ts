@@ -59,8 +59,8 @@ export class GateVerificationService {
       port: this.configService.get<number>('REDIS_PORT', 6379),
     });
 
-    this.comprefaceUrl = this.configService.getOrThrow<string>('COMPREFACE_URL');
-    this.recognizeApiKey = this.configService.getOrThrow<string>('COMPREFACE_RECOGNIZE_API_KEY');
+    this.comprefaceUrl = this.configService.get<string>('COMPREFACE_URL', 'http://compreface-api:8000');
+    this.recognizeApiKey = this.configService.get<string>('COMPREFACE_RECOGNIZE_API_KEY', '');
     this.faceMatchThreshold = this.configService.get<number>('FACE_MATCH_THRESHOLD', 0.85);
   }
 

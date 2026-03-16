@@ -56,19 +56,18 @@ describe('IdentityService', () => {
       mintKycSbt: jest.fn().mockResolvedValue('0xTxHash'),
     };
 
+    const configMap: Record<string, string | number> = {
+      AWS_REGION: 'ap-northeast-1',
+      AWS_ACCESS_KEY_ID: 'test-key',
+      AWS_SECRET_ACCESS_KEY: 'test-secret',
+      COMPREFACE_URL: 'http://localhost:8000',
+      COMPREFACE_VERIFY_API_KEY: 'verify-key',
+      COMPREFACE_RECOGNIZE_API_KEY: 'recognize-key',
+      FACE_MATCH_THRESHOLD: 0.85,
+    };
     const mockConfig = {
-      getOrThrow: jest.fn((key: string) => {
-        const map: Record<string, string> = {
-          AWS_REGION: 'ap-northeast-1',
-          AWS_ACCESS_KEY_ID: 'test-key',
-          AWS_SECRET_ACCESS_KEY: 'test-secret',
-          COMPREFACE_URL: 'http://localhost:8000',
-          COMPREFACE_VERIFY_API_KEY: 'verify-key',
-          COMPREFACE_RECOGNIZE_API_KEY: 'recognize-key',
-        };
-        return map[key];
-      }),
-      get: jest.fn().mockReturnValue(0.85),
+      getOrThrow: jest.fn((key: string) => configMap[key]),
+      get: jest.fn((key: string, defaultVal?: any) => configMap[key] ?? defaultVal),
     };
 
     const module: TestingModule = await Test.createTestingModule({

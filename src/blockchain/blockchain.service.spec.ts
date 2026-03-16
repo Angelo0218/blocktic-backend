@@ -29,17 +29,16 @@ jest.mock('ethers', () => {
 describe('BlockchainService', () => {
   let service: BlockchainService;
 
+  const configMap: Record<string, string> = {
+    POLYGON_RPC_URL: 'https://rpc-amoy.polygon.technology',
+    POLYGON_PRIVATE_KEY: '0x' + 'a'.repeat(64),
+    SBT_CONTRACT_ADDRESS: '0x' + '1'.repeat(40),
+    WALLET_FACTORY_ADDRESS: '0x' + '2'.repeat(40),
+    VRF_COORDINATOR_ADDRESS: '0x' + '3'.repeat(40),
+  };
   const mockConfig = {
-    getOrThrow: jest.fn((key: string) => {
-      const map: Record<string, string> = {
-        POLYGON_RPC_URL: 'https://rpc-amoy.polygon.technology',
-        POLYGON_PRIVATE_KEY: '0x' + 'a'.repeat(64),
-        SBT_CONTRACT_ADDRESS: '0x' + '1'.repeat(40),
-        WALLET_FACTORY_ADDRESS: '0x' + '2'.repeat(40),
-        VRF_COORDINATOR_ADDRESS: '0x' + '3'.repeat(40),
-      };
-      return map[key];
-    }),
+    getOrThrow: jest.fn((key: string) => configMap[key]),
+    get: jest.fn((key: string, defaultVal?: any) => configMap[key] ?? defaultVal),
   };
 
   beforeEach(async () => {
