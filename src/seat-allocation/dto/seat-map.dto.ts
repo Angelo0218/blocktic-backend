@@ -57,6 +57,20 @@ export class SeatMapResponseDto {
   totalAvailable: number;
 }
 
+export class SeatGroupDto {
+  @ApiProperty({ description: '此子組的座位', type: [SeatDto] })
+  seats: SeatDto[];
+
+  @ApiProperty({ description: '排號', example: 'A' })
+  row: string;
+
+  @ApiProperty({ description: '起始座位號', example: 1 })
+  startSeat: number;
+
+  @ApiProperty({ description: '結束座位號', example: 3 })
+  endSeat: number;
+}
+
 export class AllocationResultDto {
   @ApiProperty({
     description: 'Allocated seats',
@@ -69,4 +83,17 @@ export class AllocationResultDto {
     example: 'alloc-uuid-5678',
   })
   allocationId: string;
+
+  @ApiProperty({
+    description: '是否因找不到連續座位而拆組分配',
+    example: false,
+  })
+  isSplit: boolean;
+
+  @ApiProperty({
+    description: '拆組後的子組資訊（isSplit 為 true 時有值）',
+    type: [SeatGroupDto],
+    required: false,
+  })
+  groups?: SeatGroupDto[];
 }

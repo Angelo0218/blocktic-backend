@@ -12,6 +12,7 @@ import { Venue } from './entities/venue.entity';
 import { AllocateSeatsDto } from './dto/allocate-seats.dto';
 import {
   AllocationResultDto,
+  SeatGroupDto,
   SeatMapResponseDto,
   ZoneSummaryDto,
   RowSummaryDto,
@@ -57,30 +58,56 @@ export class SeatAllocationService {
         .setOnLocked('skip_locked')
         .getMany();
 
-      // Find a consecutive run of `groupSize` seats in the same row.
+      // 優先找同排連續座位
       const consecutive = this.findConsecutiveSeats(available, groupSize);
+      let isSplit = false;
+      let allocatedSeats: Seat[];
 
-      if (!consecutive) {
-        throw new ConflictException(
-          `No ${groupSize} consecutive available seats in zone ${zoneId} for event ${eventId}`,
-        );
+      if (consecutive) {
+        allocatedSeats = consecutive;
+      } else {
+        // 找不到連續座位，自動拆組：盡量大塊優先分配
+        const splitSeats = this.splitAllocate(available, groupSize);
+
+        if (!splitSeats) {
+          throw new ConflictException(
+            `Not enough available seats (need ${groupSize}) in zone ${zoneId} for event ${eventId}`,
+          );
+        }
+
+        allocatedSeats = splitSeats;
+        isSplit = true;
       }
 
       const now = new Date();
 
-      for (const seat of consecutive) {
+      for (const seat of allocatedSeats) {
         seat.status = SeatStatus.ALLOCATED;
         seat.allocatedAt = now;
       }
 
-      const saved = await manager.save(Seat, consecutive);
+      const saved = await manager.save(Seat, allocatedSeats);
 
-      this.logger.log(
-        `Allocated ${groupSize} seats (${allocationId}) in zone ${zoneId} row ${saved[0].row} seats ${saved[0].seatNumber}-${saved[saved.length - 1].seatNumber}`,
-      );
+      // 建立子組資訊
+      const groups = this.buildSeatGroups(saved);
+
+      if (isSplit) {
+        const groupDesc = groups
+          .map((g) => `${g.row}排${g.startSeat}-${g.endSeat}`)
+          .join(', ');
+        this.logger.warn(
+          `Split allocation: ${groupSize} seats (${allocationId}) in zone ${zoneId} → ${groupDesc}`,
+        );
+      } else {
+        this.logger.log(
+          `Allocated ${groupSize} seats (${allocationId}) in zone ${zoneId} row ${saved[0].row} seats ${saved[0].seatNumber}-${saved[saved.length - 1].seatNumber}`,
+        );
+      }
 
       return {
         allocationId,
+        isSplit,
+        groups: isSplit ? groups : undefined,
         seats: saved.map((s) => ({
           id: s.id,
           zoneId: s.zoneId,
@@ -194,6 +221,119 @@ export class SeatAllocationService {
    * Scan a list of seats (already sorted by row + seatNumber) and
    * return the first consecutive group of `size` seats in the same row.
    */
+  /**
+   * 找不到連續座位時，拆組分配：盡量大塊優先。
+   * 例如 groupSize=4，先找連續 4 → 沒有 → 找連續 3 + 連續 1 → 找 2+2 → 找 2+1+1 → 1+1+1+1
+   * 回傳 null 代表整個區域座位不足。
+   */
+  private splitAllocate(available: Seat[], totalNeeded: number): Seat[] | null {
+    if (available.length < totalNeeded) {
+      return null;
+    }
+
+    // 先把所有連續區段找出來
+    const runs = this.findAllConsecutiveRuns(available);
+    const result: Seat[] = [];
+    let remaining = totalNeeded;
+
+    // 貪心法：每次找最大可用的連續區段（不超過 remaining）
+    while (remaining > 0) {
+      // 從大到小嘗試
+      let bestRun: Seat[] | null = null;
+
+      for (const run of runs) {
+        if (run.length === 0) continue;
+        const take = Math.min(run.length, remaining);
+        if (!bestRun || take > bestRun.length) {
+          bestRun = run.splice(0, take);
+        }
+      }
+
+      if (!bestRun || bestRun.length === 0) {
+        return null; // 座位不足
+      }
+
+      result.push(...bestRun);
+      remaining -= bestRun.length;
+    }
+
+    return result;
+  }
+
+  /**
+   * 找出所有連續座位區段（同排且座位號碼連續）。
+   */
+  private findAllConsecutiveRuns(seats: Seat[]): Seat[][] {
+    if (seats.length === 0) return [];
+
+    const runs: Seat[][] = [[seats[0]]];
+
+    for (let i = 1; i < seats.length; i++) {
+      const prev = seats[i - 1];
+      const curr = seats[i];
+
+      if (
+        curr.row === prev.row &&
+        curr.seatNumber === prev.seatNumber + 1
+      ) {
+        runs[runs.length - 1].push(curr);
+      } else {
+        runs.push([curr]);
+      }
+    }
+
+    // 由大到小排序，優先使用大塊
+    runs.sort((a, b) => b.length - a.length);
+    return runs;
+  }
+
+  /**
+   * 將已分配的座位清單拆成子組（同排且連續的歸為一組）。
+   */
+  private buildSeatGroups(seats: Seat[]): SeatGroupDto[] {
+    const sorted = [...seats].sort((a, b) =>
+      a.row === b.row
+        ? a.seatNumber - b.seatNumber
+        : a.row.localeCompare(b.row),
+    );
+
+    const groups: SeatGroupDto[] = [];
+    let currentGroup: Seat[] = [sorted[0]];
+
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+
+      if (
+        curr.row === prev.row &&
+        curr.seatNumber === prev.seatNumber + 1
+      ) {
+        currentGroup.push(curr);
+      } else {
+        groups.push(this.toSeatGroup(currentGroup));
+        currentGroup = [curr];
+      }
+    }
+    groups.push(this.toSeatGroup(currentGroup));
+
+    return groups;
+  }
+
+  private toSeatGroup(seats: Seat[]): SeatGroupDto {
+    return {
+      row: seats[0].row,
+      startSeat: seats[0].seatNumber,
+      endSeat: seats[seats.length - 1].seatNumber,
+      seats: seats.map((s) => ({
+        id: s.id,
+        zoneId: s.zoneId,
+        row: s.row,
+        seatNumber: s.seatNumber,
+        status: s.status,
+      })),
+    };
+  }
+
   private findConsecutiveSeats(seats: Seat[], size: number): Seat[] | null {
     if (size === 1 && seats.length > 0) {
       return [seats[0]];
