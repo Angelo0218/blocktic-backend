@@ -19,6 +19,15 @@ export class DrawResultEntryDto {
 
   @ApiProperty({ nullable: true })
   drawProofTxHash: string | null;
+
+  @ApiProperty({ nullable: true, type: [String], description: '分配到的座位 UUID' })
+  allocatedSeatIds: string[] | null;
+
+  @ApiProperty({ nullable: true, description: '人類可讀座位標籤' })
+  allocatedSeatLabel: string | null;
+
+  @ApiProperty({ description: '是否為拆散分配（非連號）' })
+  isScattered: boolean;
 }
 
 export class DrawResultResponseDto {
@@ -36,6 +45,12 @@ export class DrawResultResponseDto {
 
   @ApiProperty({ nullable: true })
   drawnAt: Date | null;
+
+  @ApiProperty({ description: '中籤人數' })
+  totalWinners: number;
+
+  @ApiProperty({ description: '未中籤人數' })
+  totalLost: number;
 
   @ApiProperty({ type: [DrawResultEntryDto] })
   entries: DrawResultEntryDto[];

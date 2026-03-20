@@ -35,10 +35,13 @@ export class SeatAllocationController {
   @Roles(Role.ADMIN)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Allocate consecutive seats for a lottery winner (admin)',
+    summary: '手動配位（已整合至抽籤流程，僅供特殊用途）',
     description:
       'Automatically finds and locks consecutive seats in the requested zone. ' +
-      'Uses PostgreSQL FOR UPDATE SKIP LOCKED to safely handle concurrent requests.',
+      'Uses PostgreSQL FOR UPDATE SKIP LOCKED to safely handle concurrent requests. ' +
+      '注意：座位分配已整合至抽籤流程（POST /lottery/events/:eventId/draw），' +
+      '本 API 僅供手動補位等特殊用途。',
+    deprecated: true,
   })
   @ApiParam({ name: 'eventId', type: 'string', format: 'uuid' })
   @ApiResponse({ status: 201, type: AllocationResultDto })

@@ -5,10 +5,11 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { keccak256, solidityPacked } from 'ethers';
 import { LotteryEntry, LotteryEntryStatus } from './entities/lottery-entry.entity';
 import { DrawResult } from './entities/draw-result.entity';
+import { Seat, SeatStatus } from '../seat-allocation/entities/seat.entity';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { IdentityService } from '../identity/identity.service';
 import { RegisterLotteryDto } from './dto/register-lottery.dto';
@@ -17,6 +18,10 @@ import {
   DrawResultEntryDto,
   DrawProofResponseDto,
 } from './dto/draw-result.dto';
+import {
+  findConsecutiveSeats,
+  pickScatteredSeats,
+} from '../common/utils/seat-utils';
 
 @Injectable()
 export class LotteryService {
@@ -29,10 +34,11 @@ export class LotteryService {
     private readonly drawResultRepo: Repository<DrawResult>,
     private readonly blockchainService: BlockchainService,
     private readonly identityService: IdentityService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
-   * Register a user for the lottery of a given event.
+   * 為使用者報名活動抽籤。
    */
   async register(
     eventId: string,
@@ -58,15 +64,16 @@ export class LotteryService {
   }
 
   /**
-   * Trigger the lottery draw for an event.
+   * 觸發活動抽籤，同時原子化分配座位。
    *
-   * Steps:
-   *  1. Request randomness from Chainlink VRF.
-   *  2. Group entries by (zoneId, groupSize) into pools.
-   *  3. For each pool, expand the VRF seed via keccak256 to produce a
-   *     deterministic per-entry sort key, then sort and select winners.
-   *  4. Record draw proof on-chain via BlockTicSBT.recordDraw().
-   *  5. Persist the draw result and update entry statuses.
+   * 流程：
+   *  1. 請求 Chainlink VRF 隨機數
+   *  2. 為每筆報名計算全域排序鍵（keccak256）
+   *  3. 按 zoneId 分組，每區在同一筆 DB 交易中：
+   *     - 鎖定該區所有可用座位（FOR UPDATE SKIP LOCKED）
+   *     - 按 VRF 順序逐一分配座位（先連號、再散座）
+   *     - 座位用完即標記 LOST，杜絕超賣
+   *  4. 儲存抽籤結果並上鏈記錄
    */
   async draw(eventId: string): Promise<DrawResultResponseDto> {
     const entries = await this.entryRepo.find({ where: { eventId } });
@@ -81,38 +88,46 @@ export class LotteryService {
       throw new ConflictException('Draw has already been executed for this event');
     }
 
-    // ── Step 1: Request Chainlink VRF randomness ───────────
+    // ── Step 1: 請求 Chainlink VRF 隨機數 ─────────────
     const { vrfRequestId, randomWord } =
       await this.blockchainService.requestVrfRandomness();
 
     const randomSeedHex = `0x${randomWord.toString(16).padStart(64, '0')}`;
 
-    // ── Step 2: Group entries into pools by zoneId + groupSize ──
-    const pools = this.groupIntoPools(entries);
+    // ── Step 2: 計算全域排序鍵並按 zone 分組 ──────────
+    const sortedEntries = this.computeGlobalSortKeys(entries, randomSeedHex);
+    const zoneGroups = this.groupByZone(sortedEntries);
 
-    // ── Step 3: For each pool, expand seed and sort to pick winners ──
-    for (const [poolKey, poolEntries] of pools) {
-      this.selectWinners(poolEntries, randomSeedHex, poolKey);
+    // ── Step 3: 每區獨立交易，原子化抽籤 + 配位 ─────────
+    for (const [zoneId, zoneEntries] of zoneGroups) {
+      await this.allocateZone(eventId, zoneId, zoneEntries);
     }
 
-    const winnerEntries = entries.filter((e) => e.status === LotteryEntryStatus.WON);
+    const winnerEntries = entries.filter(
+      (e) => e.status === LotteryEntryStatus.WON,
+    );
 
-    // ── Step 4: 先持久化 DB（確保抽籤結果不遺失）──────────
+    // ── Step 4: 先持久化 DB（確保抽籤結果不遺失）────────
     const drawResult = this.drawResultRepo.create({
       eventId,
       vrfRequestId: vrfRequestId.toString(),
       randomSeed: randomSeedHex,
-      drawProofTxHash: null, // 鏈上記錄稍後補填
+      drawProofTxHash: null,
     });
     await this.drawResultRepo.save(drawResult);
 
     await Promise.all(
       entries.map((e) =>
-        this.entryRepo.update(e.id, { status: e.status }),
+        this.entryRepo.update(e.id, {
+          status: e.status,
+          allocatedSeatIds: e.allocatedSeatIds,
+          allocatedSeatLabel: e.allocatedSeatLabel,
+          isScattered: e.isScattered,
+        }),
       ),
     );
 
-    // ── Step 5: Record draw proof on-chain（失敗不影響抽籤結果）──
+    // ── Step 5: 鏈上記錄（失敗不影響抽籤結果）──────────
     try {
       const winnerWallets = await this.resolveWalletAddresses(winnerEntries);
       const eventIdNum = parseInt(eventId.replace(/-/g, '').slice(0, 8), 16);
@@ -148,14 +163,14 @@ export class LotteryService {
   }
 
   /**
-   * Get draw results for an event.
+   * 取得活動抽籤結果。
    */
   async getResults(eventId: string): Promise<DrawResultResponseDto> {
     return this.buildDrawResultResponse(eventId);
   }
 
   /**
-   * Get on-chain proof details for a draw.
+   * 取得鏈上證明詳情。
    */
   async getProof(eventId: string): Promise<DrawProofResponseDto> {
     const drawResult = await this.drawResultRepo.findOne({
@@ -179,53 +194,146 @@ export class LotteryService {
   // ----------------------------------------------------------------
 
   /**
-   * Group lottery entries into pools keyed by "zoneId:groupSize".
+   * 使用 keccak256 為每筆報名計算全域排序鍵。
+   * sortKey = keccak256(seed, zoneId, entryId)
+   * 同區內所有 groupSize 混在一起排序，VRF 決定處理優先順序。
    */
-  private groupIntoPools(
-    entries: LotteryEntry[],
-  ): Map<string, LotteryEntry[]> {
-    const pools = new Map<string, LotteryEntry[]>();
-    for (const entry of entries) {
-      const key = `${entry.zoneId}:${entry.groupSize}`;
-      const pool = pools.get(key) ?? [];
-      pool.push(entry);
-      pools.set(key, pool);
-    }
-    return pools;
-  }
-
-  /**
-   * 使用 keccak256 展開 VRF 種子，為每個 entry 產生確定性排序鍵，
-   * 排序後取前 N 名為中籤者。
-   *
-   * keccak256(seed, poolKey, entryId) 可在鏈上重現驗證。
-   */
-  private selectWinners(
+  private computeGlobalSortKeys(
     entries: LotteryEntry[],
     randomSeed: string,
-    poolKey: string,
-  ): void {
-    const sorted = entries
+  ): { entry: LotteryEntry; sortKey: string }[] {
+    return entries
       .map((entry) => {
         const sortKey = keccak256(
           solidityPacked(
             ['string', 'string', 'string'],
-            [randomSeed, poolKey, entry.id],
+            [randomSeed, entry.zoneId, entry.id],
           ),
         );
         return { entry, sortKey };
       })
       .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  }
 
-    // 選取 50% 為中籤者（正式環境可依活動設定調整）
-    const winnerCount = Math.max(1, Math.ceil(sorted.length * 0.5));
+  /**
+   * 按 zoneId 分組，保持 VRF 排序順序。
+   */
+  private groupByZone(
+    sortedEntries: { entry: LotteryEntry; sortKey: string }[],
+  ): Map<string, LotteryEntry[]> {
+    const groups = new Map<string, LotteryEntry[]>();
+    for (const { entry } of sortedEntries) {
+      const list = groups.get(entry.zoneId) ?? [];
+      list.push(entry);
+      groups.set(entry.zoneId, list);
+    }
+    return groups;
+  }
 
-    sorted.forEach(({ entry }, index) => {
-      entry.status =
-        index < winnerCount
-          ? LotteryEntryStatus.WON
-          : LotteryEntryStatus.LOST;
+  /**
+   * 單一 zone 的原子化抽籤 + 座位分配。
+   *
+   * 在一筆 DB 交易中：
+   * 1. 鎖定該區所有 AVAILABLE 座位
+   * 2. 按 VRF 順序處理每筆報名
+   * 3. 先嘗試連號 → 失敗則嘗試散座 → 都不夠則標 LOST
+   * 4. 批次更新座位狀態
+   */
+  private async allocateZone(
+    eventId: string,
+    zoneId: string,
+    entries: LotteryEntry[],
+  ): Promise<void> {
+    await this.dataSource.transaction(async (manager: EntityManager) => {
+      // 鎖定該區所有可用座位
+      const availableSeats: Seat[] = await manager
+        .createQueryBuilder(Seat, 's')
+        .where('s.eventId = :eventId', { eventId })
+        .andWhere('s.zoneId = :zoneId', { zoneId })
+        .andWhere('s.status = :status', { status: SeatStatus.AVAILABLE })
+        .orderBy('s.row', 'ASC')
+        .addOrderBy('s.seatNumber', 'ASC')
+        .setLock('pessimistic_write_or_fail')
+        .setOnLocked('skip_locked')
+        .getMany();
+
+      // 在記憶體維護可用座位清單（mutable）
+      const remaining = [...availableSeats];
+      const seatsToUpdate: Seat[] = [];
+      const now = new Date();
+
+      for (const entry of entries) {
+        const { groupSize } = entry;
+
+        // 嘗試連號分配
+        let allocated = findConsecutiveSeats(remaining, groupSize);
+        let scattered = false;
+
+        if (!allocated) {
+          // 找不到連號，降級為散座分配
+          allocated = pickScatteredSeats(remaining, groupSize);
+          scattered = true;
+        }
+
+        if (allocated) {
+          // 中籤：分配座位
+          entry.status = LotteryEntryStatus.WON;
+          entry.allocatedSeatIds = allocated.map((s) => s.id);
+          entry.allocatedSeatLabel = this.buildSeatLabel(allocated);
+          entry.isScattered = scattered;
+
+          // 更新座位狀態
+          for (const seat of allocated) {
+            seat.status = SeatStatus.ALLOCATED;
+            seat.allocatedAt = now;
+            seatsToUpdate.push(seat);
+
+            // 從可用清單移除
+            const idx = remaining.findIndex((s) => s.id === seat.id);
+            if (idx !== -1) remaining.splice(idx, 1);
+          }
+        } else {
+          // 座位不足：未中籤
+          entry.status = LotteryEntryStatus.LOST;
+          entry.allocatedSeatIds = null;
+          entry.allocatedSeatLabel = null;
+          entry.isScattered = false;
+        }
+      }
+
+      // 批次儲存座位更新
+      if (seatsToUpdate.length > 0) {
+        await manager.save(Seat, seatsToUpdate);
+      }
     });
+  }
+
+  /**
+   * 產生人類可讀的座位標籤。
+   * 例如："B 排 / 5-8 號" 或 "B 排 3 號, C 排 1 號"（散座）
+   */
+  private buildSeatLabel(seats: Seat[]): string {
+    if (seats.length === 0) return '';
+
+    // 按 row 分組
+    const byRow = new Map<string, number[]>();
+    for (const s of seats) {
+      const nums = byRow.get(s.row) ?? [];
+      nums.push(s.seatNumber);
+      byRow.set(s.row, nums);
+    }
+
+    const parts: string[] = [];
+    for (const [row, nums] of byRow) {
+      nums.sort((a, b) => a - b);
+      if (nums.length === 1) {
+        parts.push(`${row} 排 ${nums[0]} 號`);
+      } else {
+        parts.push(`${row} 排 ${nums[0]}-${nums[nums.length - 1]} 號`);
+      }
+    }
+
+    return parts.join(', ');
   }
 
   /**
@@ -248,7 +356,7 @@ export class LotteryService {
   }
 
   /**
-   * Build a full draw result response DTO.
+   * 建構完整的抽籤結果回應 DTO。
    */
   private async buildDrawResultResponse(
     eventId: string,
@@ -265,7 +373,17 @@ export class LotteryService {
       groupSize: e.groupSize,
       status: e.status,
       drawProofTxHash: e.drawProofTxHash,
+      allocatedSeatIds: e.allocatedSeatIds,
+      allocatedSeatLabel: e.allocatedSeatLabel,
+      isScattered: e.isScattered,
     }));
+
+    const totalWinners = entries.filter(
+      (e) => e.status === LotteryEntryStatus.WON,
+    ).length;
+    const totalLost = entries.filter(
+      (e) => e.status === LotteryEntryStatus.LOST,
+    ).length;
 
     return {
       eventId,
@@ -273,6 +391,8 @@ export class LotteryService {
       randomSeed: drawResult?.randomSeed ?? null,
       drawProofTxHash: drawResult?.drawProofTxHash ?? null,
       drawnAt: drawResult?.drawnAt ?? null,
+      totalWinners,
+      totalLost,
       entries: entryDtos,
     };
   }

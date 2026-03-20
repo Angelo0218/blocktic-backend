@@ -16,6 +16,7 @@ import {
   ZoneSummaryDto,
   RowSummaryDto,
 } from './dto/seat-map.dto';
+import { findConsecutiveSeats } from '../common/utils/seat-utils';
 
 @Injectable()
 export class SeatAllocationService {
@@ -58,7 +59,7 @@ export class SeatAllocationService {
         .getMany();
 
       // Find a consecutive run of `groupSize` seats in the same row.
-      const consecutive = this.findConsecutiveSeats(available, groupSize);
+      const consecutive = findConsecutiveSeats(available, groupSize);
 
       if (!consecutive) {
         throw new ConflictException(
@@ -186,37 +187,4 @@ export class SeatAllocationService {
     this.logger.log(`Released seat ${seatId}`);
   }
 
-  // ----------------------------------------------------------------
-  // Private helpers
-  // ----------------------------------------------------------------
-
-  /**
-   * Scan a list of seats (already sorted by row + seatNumber) and
-   * return the first consecutive group of `size` seats in the same row.
-   */
-  private findConsecutiveSeats(seats: Seat[], size: number): Seat[] | null {
-    if (size === 1 && seats.length > 0) {
-      return [seats[0]];
-    }
-
-    let run: Seat[] = [];
-
-    for (const seat of seats) {
-      if (
-        run.length === 0 ||
-        seat.row !== run[run.length - 1].row ||
-        seat.seatNumber !== run[run.length - 1].seatNumber + 1
-      ) {
-        run = [seat];
-      } else {
-        run.push(seat);
-      }
-
-      if (run.length === size) {
-        return run;
-      }
-    }
-
-    return null;
-  }
 }

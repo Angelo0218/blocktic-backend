@@ -4,12 +4,13 @@ import { LotteryController } from './lottery.controller';
 import { LotteryService } from './lottery.service';
 import { LotteryEntry } from './entities/lottery-entry.entity';
 import { DrawResult } from './entities/draw-result.entity';
+import { Seat } from '../seat-allocation/entities/seat.entity';
 import { BlockchainModule } from '../blockchain/blockchain.module';
 import { IdentityModule } from '../identity/identity.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([LotteryEntry, DrawResult]),
+    TypeOrmModule.forFeature([LotteryEntry, DrawResult, Seat]),
     BlockchainModule,
     IdentityModule,
   ],
