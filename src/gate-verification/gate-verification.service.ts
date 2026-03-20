@@ -83,7 +83,7 @@ export class GateVerificationService {
 
     const qrToken = this.jwtService.sign(
       { sub: ticketId, nonce },
-      { expiresIn: this.QR_TTL_SECONDS, algorithm: 'RS256' },
+      { expiresIn: this.QR_TTL_SECONDS },
     );
 
     return { qrToken, expiresIn: this.QR_TTL_SECONDS };
@@ -100,7 +100,7 @@ export class GateVerificationService {
     // 1. Parse and verify JWT signature
     let payload: QrPayload;
     try {
-      payload = this.jwtService.verify<QrPayload>(qrToken, { algorithms: ['RS256'] });
+      payload = this.jwtService.verify<QrPayload>(qrToken);
     } catch {
       throw new UnauthorizedException('Invalid or expired QR token');
     }
