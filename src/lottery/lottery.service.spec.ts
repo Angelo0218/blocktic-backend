@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { LotteryService } from './lottery.service';
 import { LotteryEntry, LotteryEntryStatus } from './entities/lottery-entry.entity';
@@ -42,6 +43,18 @@ describe('LotteryService', () => {
       }),
     };
 
+    const mockDataSource = {
+      transaction: jest.fn().mockImplementation(async (cb: any) => {
+        const manager = {
+          findOne: jest.fn().mockResolvedValue(null),
+          create: drawResultRepo.create,
+          save: jest.fn().mockImplementation((entity, data) => Promise.resolve(data ?? entity)),
+          update: jest.fn().mockResolvedValue(undefined),
+        };
+        return cb(manager);
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LotteryService,
@@ -49,6 +62,7 @@ describe('LotteryService', () => {
         { provide: getRepositoryToken(DrawResult), useValue: drawResultRepo },
         { provide: BlockchainService, useValue: mockBlockchain },
         { provide: IdentityService, useValue: mockIdentity },
+        { provide: DataSource, useValue: mockDataSource },
       ],
     }).compile();
 

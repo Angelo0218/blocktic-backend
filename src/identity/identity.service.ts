@@ -15,6 +15,7 @@ import {
   type FaceDetail,
 } from '@aws-sdk/client-rekognition';
 import { Person, KycStatus } from './entities/person.entity';
+import { User } from '../auth/entities/user.entity';
 import { BlockchainService } from '../blockchain/blockchain.service';
 import { SubmitKycDto } from './dto/submit-kyc.dto';
 import { KycSubmitResponseDto, KycStatusResponseDto } from './dto/kyc-status.dto';
@@ -39,6 +40,8 @@ export class IdentityService {
   constructor(
     @InjectRepository(Person)
     private readonly personRepo: Repository<Person>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly dataSource: DataSource,
     private readonly config: ConfigService,
     private readonly blockchainService: BlockchainService,
@@ -73,7 +76,7 @@ export class IdentityService {
    *  3. 1:1 face comparison (CompreFace)
    *  4. 1:N face deduplication (CompreFace)
    */
-  async submitKyc(dto: SubmitKycDto): Promise<KycSubmitResponseDto> {
+  async submitKyc(dto: SubmitKycDto, authUserId?: string): Promise<KycSubmitResponseDto> {
     if (!dto.consent) {
       throw new BadRequestException(
         'User must explicitly consent to biometric data processing.',
@@ -173,6 +176,13 @@ export class IdentityService {
             `KYC 已通過但區塊鏈操作失敗 person=${person.id}，可稍後重試`,
             blockchainError,
           );
+        }
+
+        // ── 關聯 Auth User ↔ Person（讓票務/驗票可透過 userId 找到 KYC 資料）──
+        if (authUserId) {
+          const userRepo = manager.getRepository(User);
+          await userRepo.update(authUserId, { personId: person.id });
+          this.logger.log(`Auth User ${authUserId} linked to Person ${person.id}`);
         }
 
         return this.buildResponse(person, 'KYC approved. All verification layers passed.');

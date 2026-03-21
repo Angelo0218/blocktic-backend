@@ -33,6 +33,8 @@ import { AppService } from './app.service';
         database: config.get('DB_DATABASE', 'blocktic'),
         autoLoadEntities: true,
         synchronize: config.get('NODE_ENV', 'development') !== 'production',
+        migrations: ['dist/migrations/*.js'],
+        migrationsRun: config.get('NODE_ENV', 'development') === 'production',
       }),
     }),
     BullModule.forRootAsync({

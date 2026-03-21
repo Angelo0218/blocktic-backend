@@ -2,8 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { BadRequestException } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { IdentityService } from './identity.service';
 import { Person, KycStatus } from './entities/person.entity';
+import { User } from '../auth/entities/user.entity';
 import { BlockchainService } from '../blockchain/blockchain.service';
 
 // Mock AWS SDK
@@ -70,10 +72,29 @@ describe('IdentityService', () => {
       get: jest.fn((key: string, defaultVal?: any) => configMap[key] ?? defaultVal),
     };
 
+    const mockUserRepo = {
+      update: jest.fn().mockResolvedValue(undefined),
+      findOne: jest.fn().mockResolvedValue(null),
+    };
+
+    const mockDataSource = {
+      transaction: jest.fn().mockImplementation((cb: any) =>
+        cb({
+          getRepository: (entity: any) => {
+            if (entity === Person) return personRepo;
+            if (entity === User) return mockUserRepo;
+            return {};
+          },
+        }),
+      ),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         IdentityService,
         { provide: getRepositoryToken(Person), useValue: personRepo },
+        { provide: getRepositoryToken(User), useValue: mockUserRepo },
+        { provide: DataSource, useValue: mockDataSource },
         { provide: ConfigService, useValue: mockConfig },
         { provide: BlockchainService, useValue: mockBlockchain },
       ],

@@ -45,8 +45,11 @@ export class IdentityController {
   @ApiResponse({ status: 200, description: 'KYC result', type: KycSubmitResponseDto })
   @ApiResponse({ status: 400, description: 'Invalid input or missing consent' })
   @ApiResponse({ status: 409, description: 'Duplicate identity detected' })
-  async submitKyc(@Body() dto: SubmitKycDto): Promise<KycSubmitResponseDto> {
-    return this.identityService.submitKyc(dto);
+  async submitKyc(
+    @Body() dto: SubmitKycDto,
+    @CurrentUser('sub') authUserId: string,
+  ): Promise<KycSubmitResponseDto> {
+    return this.identityService.submitKyc(dto, authUserId);
   }
 
   @Get('kyc/status/:userId')
