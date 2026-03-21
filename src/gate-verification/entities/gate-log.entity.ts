@@ -22,6 +22,7 @@ export enum VerificationResult {
 
 @Entity('gate_logs')
 @Index(['eventId', 'verifiedAt'])
+@Index(['eventId', 'result', 'verifiedAt'])
 @Index(['ticketId'])
 export class GateLog {
   @ApiProperty({ description: 'UUID primary key' })

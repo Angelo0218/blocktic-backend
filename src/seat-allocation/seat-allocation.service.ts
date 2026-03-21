@@ -61,6 +61,20 @@ export class SeatAllocationService {
       const consecutive = this.findConsecutiveSeats(available, groupSize);
 
       if (!consecutive) {
+        // 區分「全被其他 transaction 鎖住」和「真的沒有連號」
+        const totalAvailable = await manager
+          .createQueryBuilder(Seat, 's')
+          .where('s.eventId = :eventId', { eventId })
+          .andWhere('s.zoneId = :zoneId', { zoneId })
+          .andWhere('s.status = :status', { status: SeatStatus.AVAILABLE })
+          .getCount();
+
+        if (totalAvailable > 0 && available.length === 0) {
+          throw new ConflictException(
+            `Seats in zone ${zoneId} are temporarily locked by other allocations. Please retry.`,
+          );
+        }
+
         throw new ConflictException(
           `No ${groupSize} consecutive available seats in zone ${zoneId} for event ${eventId}`,
         );

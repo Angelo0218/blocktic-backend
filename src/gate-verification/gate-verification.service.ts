@@ -212,7 +212,18 @@ export class GateVerificationService {
         throw new BadRequestException('No valid ticket found for this person and event');
       }
 
-      await this.ticketRepo.update(paidTicket.id, { status: TicketStatus.USED });
+      // 條件式 UPDATE 防止並發雙重入場
+      const paidResult = await this.ticketRepo
+        .createQueryBuilder()
+        .update()
+        .set({ status: TicketStatus.USED })
+        .where('id = :id', { id: paidTicket.id })
+        .andWhere('status IN (:...valid)', { valid: [TicketStatus.PAID, TicketStatus.MINTED] })
+        .execute();
+      if (paidResult.affected === 0) {
+        await this.saveLog(eventId, paidTicket.id, gateId, VerificationMode.FALLBACK, VerificationResult.FAILED, null, staffId);
+        throw new ConflictException('Ticket was already consumed by a concurrent scan');
+      }
       await this.saveLog(eventId, paidTicket.id, gateId, VerificationMode.FALLBACK, VerificationResult.FALLBACK, null, staffId);
 
       return {
@@ -224,7 +235,18 @@ export class GateVerificationService {
       };
     }
 
-    await this.ticketRepo.update(ticket.id, { status: TicketStatus.USED });
+    // 條件式 UPDATE 防止並發雙重入場
+    const mintedResult = await this.ticketRepo
+      .createQueryBuilder()
+      .update()
+      .set({ status: TicketStatus.USED })
+      .where('id = :id', { id: ticket.id })
+      .andWhere('status IN (:...valid)', { valid: [TicketStatus.PAID, TicketStatus.MINTED] })
+      .execute();
+    if (mintedResult.affected === 0) {
+      await this.saveLog(eventId, ticket.id, gateId, VerificationMode.FALLBACK, VerificationResult.FAILED, null, staffId);
+      throw new ConflictException('Ticket was already consumed by a concurrent scan');
+    }
     await this.saveLog(eventId, ticket.id, gateId, VerificationMode.FALLBACK, VerificationResult.FALLBACK, null, staffId);
 
     return {

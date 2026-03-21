@@ -4,6 +4,7 @@ import { Repository, LessThanOrEqual } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { AuditLog, AuditAction } from './entities/audit-log.entity';
+import { GateLog } from '../gate-verification/entities/gate-log.entity';
 import { AuditQueryDto } from './dto/audit-query.dto';
 import { AuditSummaryDto } from './dto/audit-summary.dto';
 
@@ -14,6 +15,8 @@ export class AuditService {
   constructor(
     @InjectRepository(AuditLog)
     private readonly auditLogRepo: Repository<AuditLog>,
+    @InjectRepository(GateLog)
+    private readonly gateLogRepo: Repository<GateLog>,
     private readonly configService: ConfigService,
   ) {}
 
@@ -95,19 +98,18 @@ export class AuditService {
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     this.logger.log(`Running scheduled cleanup for events ended before ${cutoff.toISOString()}`);
 
-    // Find distinct eventIds that have gate_verified logs older than 24 h
-    // but no data_cleanup log yet (meaning cleanup hasn't been performed).
-    const eventsToClean = await this.auditLogRepo
-      .createQueryBuilder('log')
-      .select('DISTINCT log.eventId', 'eventId')
-      .where('log.action = :action', { action: AuditAction.GATE_VERIFIED })
-      .andWhere('log.createdAt <= :cutoff', { cutoff })
+    // 從 gate_logs 表找出有驗票紀錄且超過 24 小時的活動，
+    // 且在 audit_logs 中尚未有 data_cleanup 紀錄（代表尚未清理）。
+    const eventsToClean = await this.gateLogRepo
+      .createQueryBuilder('gl')
+      .select('DISTINCT gl.eventId', 'eventId')
+      .where('gl.verifiedAt <= :cutoff', { cutoff })
       .andWhere((qb) => {
         const sub = qb
           .subQuery()
           .select('1')
           .from(AuditLog, 'cleanup')
-          .where('cleanup.eventId = log.eventId')
+          .where('cleanup.eventId = gl.eventId')
           .andWhere('cleanup.action = :cleanupAction')
           .getQuery();
         return `NOT EXISTS ${sub}`;
@@ -125,19 +127,25 @@ export class AuditService {
       try {
         this.logger.log(`Deleting CompreFace collection for event ${eventId}`);
 
-        // Call CompreFace REST API to delete the subject collection.
         const url = `${compreFaceBaseUrl}/api/v1/recognition/subjects/${eventId}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
         const response = await fetch(url, {
           method: 'DELETE',
           headers: { 'x-api-key': compreFaceApiKey },
+          signal: controller.signal,
         });
+        clearTimeout(timeout);
 
         if (!response.ok && response.status !== 404) {
+          // 刪除失敗時不記錄 DATA_CLEANUP，下次排程會重試
           this.logger.warn(
-            `CompreFace deletion returned ${response.status} for event ${eventId}`,
+            `CompreFace deletion returned ${response.status} for event ${eventId}, will retry next cycle`,
           );
+          continue;
         }
 
+        // 只有成功刪除（或 404 已不存在）時才記錄清理完成
         await this.logAction({
           eventId,
           action: AuditAction.DATA_CLEANUP,
@@ -146,7 +154,8 @@ export class AuditService {
 
         this.logger.log(`Cleanup complete for event ${eventId}`);
       } catch (error) {
-        this.logger.error(`Cleanup failed for event ${eventId}`, error);
+        // 網路錯誤或 timeout，不記錄 DATA_CLEANUP，下次排程會重試
+        this.logger.error(`Cleanup failed for event ${eventId}, will retry next cycle`, error);
       }
     }
   }

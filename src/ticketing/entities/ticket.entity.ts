@@ -16,6 +16,7 @@ export enum TicketStatus {
 
 @Entity('tickets')
 @Index(['eventId', 'userId'])
+@Index(['eventId', 'status'])
 @Index(['userId', 'status'])
 export class Ticket {
   @PrimaryGeneratedColumn('uuid')

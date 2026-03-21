@@ -273,7 +273,7 @@ export class TicketingService {
   private generateTradeNo(): string {
     const now = new Date();
     const ts = now.toISOString().replace(/[-T:.Z]/g, '').slice(2, 14); // 12 位（去年份前兩碼）
-    const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const rand = createHash('sha256').update(`${Date.now()}-${Math.random()}`).digest('hex').substring(0, 6).toUpperCase();
     return `BT${ts}${rand}`;
   }
 

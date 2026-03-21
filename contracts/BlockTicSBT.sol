@@ -4,11 +4,28 @@ pragma solidity ^0.8.19;
 import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
+/**
+ * @title BlockTicSBT
+ * @notice ERC-1155 Soulbound Token — transfer, batch transfer, and approval
+ *         are all overridden so only the platform (owner) can operate.
+ */
 contract BlockTicSBT is ERC1155, Ownable {
 
     constructor() ERC1155("") Ownable(msg.sender) {}
 
-    // === Soulbound: override transfer → only platform can operate ===
+    // === Soulbound: override all transfer & approval functions ===
+
+    /// @notice Prevent users from setting operator approvals (bypasses Soulbound)
+    function setApprovalForAll(address operator, bool approved) public override {
+        require(msg.sender == owner(), "Soulbound: approval disabled");
+        super.setApprovalForAll(operator, approved);
+    }
+
+    /// @notice Platform can update token metadata URI
+    function setURI(string memory newuri) external onlyOwner {
+        _setURI(newuri);
+    }
+
     function safeTransferFrom(
         address from, address to, uint256 id,
         uint256 amount, bytes memory data

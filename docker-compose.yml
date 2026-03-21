@@ -44,7 +44,7 @@ services:
   # ── Redis（快取 + BullMQ + nonce 防重放）──
   redis:
     image: redis:7-alpine
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --maxmemory 256mb --maxmemory-policy volatile-lru
     ports:
       - "6379:6379"
     volumes:

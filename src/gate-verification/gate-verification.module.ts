@@ -16,12 +16,21 @@ import { BlockchainModule } from '../blockchain/blockchain.module';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        privateKey: config.get<string>('JWT_PRIVATE_KEY'),
-        publicKey: config.get<string>('JWT_PUBLIC_KEY'),
-        signOptions: { algorithm: 'RS256' },
-        verifyOptions: { algorithms: ['RS256'] },
-      }),
+      useFactory: (config: ConfigService) => {
+        const privateKey = config.get<string>('JWT_PRIVATE_KEY');
+        const publicKey = config.get<string>('JWT_PUBLIC_KEY');
+        if (!privateKey || !publicKey) {
+          throw new Error(
+            'JWT_PRIVATE_KEY and JWT_PUBLIC_KEY must be set for QR token signing.',
+          );
+        }
+        return {
+          privateKey,
+          publicKey,
+          signOptions: { algorithm: 'RS256' },
+          verifyOptions: { algorithms: ['RS256'] },
+        };
+      },
     }),
     BlockchainModule,
   ],
