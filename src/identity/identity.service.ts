@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { createHash } from 'crypto';
 import {
   RekognitionClient,
@@ -39,6 +39,7 @@ export class IdentityService {
   constructor(
     @InjectRepository(Person)
     private readonly personRepo: Repository<Person>,
+    private readonly dataSource: DataSource,
     private readonly config: ConfigService,
     private readonly blockchainService: BlockchainService,
   ) {
@@ -83,103 +84,105 @@ export class IdentityService {
     const idCardImage = this.stripDataUrlPrefix(dto.idCardImage);
     const selfieImage = this.stripDataUrlPrefix(dto.selfieImage);
 
-    // Create or retrieve person record
-    let person: Person;
-    if (dto.userId) {
-      const existing = await this.personRepo.findOne({ where: { id: dto.userId } });
-      if (!existing) {
-        throw new NotFoundException(`Person with id ${dto.userId} not found.`);
+    // 整個 KYC 四層防線包裹在 DB transaction 中，避免部分狀態殘留
+    return this.dataSource.transaction(async (manager) => {
+      const personRepo = manager.getRepository(Person);
+
+      // Create or retrieve person record
+      let person: Person;
+      if (dto.userId) {
+        const existing = await personRepo.findOne({ where: { id: dto.userId } });
+        if (!existing) {
+          throw new NotFoundException(`Person with id ${dto.userId} not found.`);
+        }
+        person = existing;
+      } else {
+        person = personRepo.create({
+          kycStatus: KycStatus.PENDING,
+          consentRecordedAt: new Date(),
+        });
+        person = await personRepo.save(person);
       }
-      person = existing;
-    } else {
-      person = this.personRepo.create({
-        kycStatus: KycStatus.PENDING,
-        consentRecordedAt: new Date(),
-      });
-      person = await this.personRepo.save(person);
-    }
 
-    try {
-      // ── Layer 1: ID Document Uniqueness ───────────────────
-      // 依賴 DB unique constraint 防止 race condition
-      const idHash = this.hashDocument(idCardImage);
-      const duplicate = await this.personRepo.findOne({
-        where: { personIdHash: idHash },
-      });
-      if (duplicate && duplicate.id !== person.id) {
-        person.kycStatus = KycStatus.REJECTED;
-        await this.personRepo.save(person);
-        return this.buildResponse(person, 'Rejected: duplicate ID document detected.');
-      }
-      person.personIdHash = idHash;
-      person.kycStatus = KycStatus.ID_VERIFIED;
-      await this.personRepo.save(person);
-
-      // ── Layer 2: Liveness Detection (AWS Rekognition) ─────
-      const livenessResult = await this.detectLiveness(selfieImage);
-      if (!livenessResult.isLive) {
-        person.kycStatus = KycStatus.REJECTED;
-        await this.personRepo.save(person);
-        return this.buildResponse(person, 'Rejected: liveness check failed.');
-      }
-      person.kycStatus = KycStatus.LIVENESS_PASSED;
-      await this.personRepo.save(person);
-
-      // ── Layer 3: 1:1 Face Comparison (CompreFace) ─────────
-      const faceMatchResult = await this.compareFaces(idCardImage, selfieImage);
-      if (!faceMatchResult.isMatch) {
-        person.kycStatus = KycStatus.REJECTED;
-        await this.personRepo.save(person);
-        return this.buildResponse(
-          person,
-          'Rejected: selfie does not match ID document photo.',
-        );
-      }
-      person.kycStatus = KycStatus.FACE_MATCHED;
-      await this.personRepo.save(person);
-
-      // ── Layer 4: 1:N Face Deduplication (CompreFace) ──────
-      const dedupResult = await this.deduplicateFace(selfieImage, person.id);
-      if (dedupResult.duplicateFound) {
-        person.kycStatus = KycStatus.REJECTED;
-        await this.personRepo.save(person);
-        return this.buildResponse(
-          person,
-          'Rejected: face already registered under another account.',
-        );
-      }
-      person.faceEmbeddingRef = dedupResult.subjectId;
-
-      // ── All layers passed ─────────────────────────────────
-      person.kycStatus = KycStatus.APPROVED;
-      await this.personRepo.save(person);
-
-      // ── 建立 AA 錢包 + 鑄造 KYC SBT（失敗不影響 KYC 狀態）──
       try {
-        const wallet = await this.blockchainService.createAAWallet(person.id);
-        person.aaWalletAddress = wallet.walletAddress;
+        // ── Layer 1: ID Document Uniqueness ───────────────────
+        // 依賴 DB unique constraint 防止 race condition
+        const idHash = this.hashDocument(idCardImage);
+        const duplicate = await personRepo.findOne({
+          where: { personIdHash: idHash },
+        });
+        if (duplicate && duplicate.id !== person.id) {
+          person.kycStatus = KycStatus.REJECTED;
+          await personRepo.save(person);
+          return this.buildResponse(person, 'Rejected: duplicate ID document detected.');
+        }
+        person.personIdHash = idHash;
+        person.kycStatus = KycStatus.ID_VERIFIED;
 
-        const txHash = await this.blockchainService.mintKycSbt(
-          wallet.walletAddress,
-          KYC_ATTESTATION_TOKEN_ID,
-        );
-        person.kycAttestationTxHash = txHash;
-        await this.personRepo.save(person);
-      } catch (blockchainError) {
-        // 區塊鏈操作失敗不應影響已通過的 KYC 結果，可稍後重試
-        this.logger.error(
-          `KYC 已通過但區塊鏈操作失敗 person=${person.id}，可稍後重試`,
-          blockchainError,
-        );
+        // ── Layer 2: Liveness Detection (AWS Rekognition) ─────
+        const livenessResult = await this.detectLiveness(selfieImage);
+        if (!livenessResult.isLive) {
+          person.kycStatus = KycStatus.REJECTED;
+          await personRepo.save(person);
+          return this.buildResponse(person, 'Rejected: liveness check failed.');
+        }
+        person.kycStatus = KycStatus.LIVENESS_PASSED;
+
+        // ── Layer 3: 1:1 Face Comparison (CompreFace) ─────────
+        const faceMatchResult = await this.compareFaces(idCardImage, selfieImage);
+        if (!faceMatchResult.isMatch) {
+          person.kycStatus = KycStatus.REJECTED;
+          await personRepo.save(person);
+          return this.buildResponse(
+            person,
+            'Rejected: selfie does not match ID document photo.',
+          );
+        }
+        person.kycStatus = KycStatus.FACE_MATCHED;
+
+        // ── Layer 4: 1:N Face Deduplication (CompreFace) ──────
+        const dedupResult = await this.deduplicateFace(selfieImage, person.id);
+        if (dedupResult.duplicateFound) {
+          person.kycStatus = KycStatus.REJECTED;
+          await personRepo.save(person);
+          return this.buildResponse(
+            person,
+            'Rejected: face already registered under another account.',
+          );
+        }
+        person.faceEmbeddingRef = dedupResult.subjectId;
+
+        // ── All layers passed — 一次性寫入最終狀態 ──────────
+        person.kycStatus = KycStatus.APPROVED;
+        await personRepo.save(person);
+
+        // ── 建立 AA 錢包 + 鑄造 KYC SBT（失敗不影響 KYC 狀態）──
+        try {
+          const wallet = await this.blockchainService.createAAWallet(person.id);
+          person.aaWalletAddress = wallet.walletAddress;
+
+          const txHash = await this.blockchainService.mintKycSbt(
+            wallet.walletAddress,
+            KYC_ATTESTATION_TOKEN_ID,
+          );
+          person.kycAttestationTxHash = txHash;
+          await personRepo.save(person);
+        } catch (blockchainError) {
+          // 區塊鏈操作失敗不應影響已通過的 KYC 結果，可稍後重試
+          this.logger.error(
+            `KYC 已通過但區塊鏈操作失敗 person=${person.id}，可稍後重試`,
+            blockchainError,
+          );
+        }
+
+        return this.buildResponse(person, 'KYC approved. All verification layers passed.');
+      } catch (error) {
+        this.logger.error(`KYC verification failed for person ${person.id}`, error);
+        person.kycStatus = KycStatus.REJECTED;
+        await personRepo.save(person);
+        throw error;
       }
-
-      return this.buildResponse(person, 'KYC approved. All verification layers passed.');
-    } catch (error) {
-      this.logger.error(`KYC verification failed for person ${person.id}`, error);
-      person.kycStatus = KycStatus.REJECTED;
-      await this.personRepo.save(person);
-      throw error;
-    }
+    });
   }
 
   /**

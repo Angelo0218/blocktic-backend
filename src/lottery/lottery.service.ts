@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { keccak256, solidityPacked } from 'ethers';
 import { LotteryEntry, LotteryEntryStatus } from './entities/lottery-entry.entity';
 import { DrawResult } from './entities/draw-result.entity';
@@ -29,6 +29,7 @@ export class LotteryService {
     private readonly drawResultRepo: Repository<DrawResult>,
     private readonly blockchainService: BlockchainService,
     private readonly identityService: IdentityService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -54,7 +55,15 @@ export class LotteryService {
       status: LotteryEntryStatus.PENDING,
     });
 
-    return this.entryRepo.save(entry);
+    try {
+      return await this.entryRepo.save(entry);
+    } catch (error: any) {
+      // 並發請求同時通過 findOne 檢查時，DB unique constraint 會攔截
+      if (error?.code === '23505') {
+        throw new ConflictException('User already registered for this event lottery');
+      }
+      throw error;
+    }
   }
 
   /**
@@ -91,26 +100,38 @@ export class LotteryService {
     const pools = this.groupIntoPools(entries);
 
     // ── Step 3: For each pool, expand seed and sort to pick winners ──
-    for (const [poolKey, poolEntries] of pools) {
-      this.selectWinners(poolEntries, randomSeedHex, poolKey);
+    // 按 poolKey 排序確保處理順序確定性（Map 的迭代順序依賴插入順序）
+    const sortedPoolKeys = Array.from(pools.keys()).sort();
+    for (const poolKey of sortedPoolKeys) {
+      this.selectWinners(pools.get(poolKey)!, randomSeedHex, poolKey);
     }
 
     const winnerEntries = entries.filter((e) => e.status === LotteryEntryStatus.WON);
 
-    // ── Step 4: 先持久化 DB（確保抽籤結果不遺失）──────────
-    const drawResult = this.drawResultRepo.create({
-      eventId,
-      vrfRequestId: vrfRequestId.toString(),
-      randomSeed: randomSeedHex,
-      drawProofTxHash: null, // 鏈上記錄稍後補填
-    });
-    await this.drawResultRepo.save(drawResult);
+    // ── Step 4: Transaction 內持久化（確保抽籤結果不遺失 + 防並發雙抽）──
+    const drawResult = await this.dataSource.transaction(async (manager) => {
+      // Transaction 內再次檢查（DB unique constraint 也會攔截，但提早報錯更好）
+      const existingDraw = await manager.findOne(DrawResult, { where: { eventId } });
+      if (existingDraw) {
+        throw new ConflictException('Draw has already been executed for this event');
+      }
 
-    await Promise.all(
-      entries.map((e) =>
-        this.entryRepo.update(e.id, { status: e.status }),
-      ),
-    );
+      const result = manager.create(DrawResult, {
+        eventId,
+        vrfRequestId: vrfRequestId.toString(),
+        randomSeed: randomSeedHex,
+        drawProofTxHash: null,
+      });
+      await manager.save(DrawResult, result);
+
+      await Promise.all(
+        entries.map((e) =>
+          manager.update(LotteryEntry, e.id, { status: e.status }),
+        ),
+      );
+
+      return result;
+    });
 
     // ── Step 5: Record draw proof on-chain（失敗不影響抽籤結果）──
     try {
