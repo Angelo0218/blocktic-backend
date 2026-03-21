@@ -22,6 +22,7 @@ import { TicketResponseDto } from './dto/ticket-response.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles, Role } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @ApiTags('Ticketing')
 @ApiBearerAuth()
@@ -37,7 +38,10 @@ export class TicketingController {
   async preauthorize(
     @Param('eventId', ParseUUIDPipe) eventId: string,
     @Body() dto: PreauthDto,
+    @CurrentUser('sub') userId: string,
   ): Promise<{ ticket: TicketResponseDto; paymentFormData: Record<string, string> }> {
+    // 使用 JWT subject 作為 userId，忽略 body 中的 userId 防止偽造
+    dto.userId = userId;
     return this.ticketingService.preauthorize(eventId, dto);
   }
 
@@ -72,8 +76,9 @@ export class TicketingController {
   @ApiResponse({ status: 201, type: TicketResponseDto })
   async refund(
     @Param('ticketId', ParseUUIDPipe) ticketId: string,
+    @CurrentUser('sub') userId: string,
   ): Promise<TicketResponseDto> {
-    return this.ticketingService.refundTicket(ticketId);
+    return this.ticketingService.refundTicket(ticketId, userId);
   }
 
   // ECPay callback 不需要 JWT（綠界伺服器回呼，用 CheckMacValue 驗證）
@@ -90,9 +95,20 @@ export class TicketingController {
     return this.ticketingService.handleEcpayCallback(body);
   }
 
-  @Get('user/:userId')
+  @Get('my')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Get all tickets for a user' })
+  @ApiOperation({ summary: 'Get all tickets for the current user' })
+  @ApiResponse({ status: 200, type: [TicketResponseDto] })
+  async findMyTickets(
+    @CurrentUser('sub') userId: string,
+  ): Promise<TicketResponseDto[]> {
+    return this.ticketingService.findByUser(userId);
+  }
+
+  @Get('user/:userId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get all tickets for a specific user (admin only)' })
   @ApiParam({ name: 'userId', type: 'string', format: 'uuid' })
   @ApiResponse({ status: 200, type: [TicketResponseDto] })
   async findByUser(

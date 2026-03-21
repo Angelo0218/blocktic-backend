@@ -53,6 +53,10 @@ export class Ticket {
   @Column({ type: 'varchar', nullable: true })
   preauthTradeNo: string | null;
 
+  /** ECPay 處理端指派的交易號（從 callback 取得），DoAction 請款/退款時需要 */
+  @Column({ type: 'varchar', nullable: true })
+  ecpayTradeNo: string | null;
+
   @Column({ type: 'timestamp', nullable: true })
   paidAt: Date | null;
 

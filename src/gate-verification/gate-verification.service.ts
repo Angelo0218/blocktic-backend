@@ -156,8 +156,21 @@ export class GateVerificationService {
       }
     }
 
-    // 7. Mark ticket as used
-    await this.ticketRepo.update(ticketId, { status: TicketStatus.USED });
+    // 7. Atomically mark ticket as used (conditional update prevents double-entry)
+    const updateResult = await this.ticketRepo
+      .createQueryBuilder()
+      .update()
+      .set({ status: TicketStatus.USED })
+      .where('id = :ticketId', { ticketId })
+      .andWhere('status IN (:...validStatuses)', {
+        validStatuses: [TicketStatus.PAID, TicketStatus.MINTED],
+      })
+      .execute();
+
+    if (updateResult.affected === 0) {
+      await this.saveLog(ticket.eventId, ticketId, gateId, mode, VerificationResult.FAILED, faceScore, staffId);
+      throw new ConflictException('Ticket was already consumed by a concurrent scan');
+    }
 
     // 8. Log success
     await this.saveLog(ticket.eventId, ticketId, gateId, mode, VerificationResult.SUCCESS, faceScore, staffId);

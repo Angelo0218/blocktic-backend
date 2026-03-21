@@ -95,7 +95,7 @@ export class TicketingService {
       );
     }
 
-    await this.ecpayDoAction(ticket.preauthTradeNo!, 'C', ticket.amount);
+    await this.ecpayDoAction(ticket.preauthTradeNo!, ticket.ecpayTradeNo, 'C', ticket.amount);
 
     ticket.status = TicketStatus.PAID;
     ticket.paidAt = new Date();
@@ -151,8 +151,13 @@ export class TicketingService {
   // Refund: void pre-auth, burn SBT, return seat
   // ----------------------------------------------------------------
 
-  async refundTicket(ticketId: string): Promise<Ticket> {
+  async refundTicket(ticketId: string, requestUserId?: string): Promise<Ticket> {
     const ticket = await this.findOneOrFail(ticketId);
+
+    // 驗證請求者是票券擁有者（若有提供 userId）
+    if (requestUserId && ticket.userId !== requestUserId) {
+      throw new BadRequestException('You can only refund your own tickets');
+    }
 
     const refundable: TicketStatus[] = [
       TicketStatus.PREAUTHORIZED,
@@ -167,7 +172,7 @@ export class TicketingService {
 
     // ECPay 退款 / 取消預授權
     if (ticket.preauthTradeNo) {
-      await this.ecpayDoAction(ticket.preauthTradeNo, 'N', ticket.amount);
+      await this.ecpayDoAction(ticket.preauthTradeNo, ticket.ecpayTradeNo, 'N', ticket.amount);
     }
 
     // 歸還座位
@@ -216,23 +221,30 @@ export class TicketingService {
       return '0|CheckMacValue Error';
     }
 
-    const tradeNo = body['MerchantTradeNo'];
+    const merchantTradeNo = body['MerchantTradeNo'];
+    const ecpayTradeNo = body['TradeNo']; // ECPay 處理端指派的交易號
     const rtnCode = body['RtnCode'];
 
     const ticket = await this.ticketRepo.findOne({
-      where: { preauthTradeNo: tradeNo },
+      where: { preauthTradeNo: merchantTradeNo },
     });
 
     if (!ticket) {
-      this.logger.error(`ECPay callback: 找不到 trade ${tradeNo}`);
+      this.logger.error(`ECPay callback: 找不到 trade ${merchantTradeNo}`);
       return '0|Order Not Found';
+    }
+
+    // 保存 ECPay 處理端交易號（DoAction 請款/退款時需要）
+    if (ecpayTradeNo) {
+      ticket.ecpayTradeNo = ecpayTradeNo;
+      await this.ticketRepo.save(ticket);
     }
 
     // RtnCode=1 表示交易成功
     if (rtnCode === '1') {
-      this.logger.log(`ECPay callback 成功 — trade=${tradeNo}`);
+      this.logger.log(`ECPay callback 成功 — trade=${merchantTradeNo}, ecpayTradeNo=${ecpayTradeNo}`);
     } else {
-      this.logger.warn(`ECPay callback 失敗 — trade=${tradeNo}, RtnCode=${rtnCode}`);
+      this.logger.warn(`ECPay callback 失敗 — trade=${merchantTradeNo}, RtnCode=${rtnCode}`);
     }
 
     // 綠界要求回傳 "1|OK"
@@ -336,14 +348,15 @@ export class TicketingService {
    * 綠界 DoAction（請款/退款/取消）。
    */
   private async ecpayDoAction(
-    tradeNo: string,
+    merchantTradeNo: string,
+    ecpayTradeNo: string | null,
     action: 'C' | 'R' | 'E' | 'N',
     amount: number,
   ): Promise<void> {
     const params: Record<string, string | number> = {
       MerchantID: this.ecpayMerchantId,
-      MerchantTradeNo: tradeNo,
-      TradeNo: tradeNo,
+      MerchantTradeNo: merchantTradeNo,
+      TradeNo: ecpayTradeNo ?? merchantTradeNo,
       Action: action,
       TotalAmount: amount,
     };
@@ -369,11 +382,11 @@ export class TicketingService {
 
     if (!response.ok) {
       const body = await response.text();
-      this.logger.error(`ECPay DoAction 失敗 — action=${action}, trade=${tradeNo}, body=${body}`);
+      this.logger.error(`ECPay DoAction 失敗 — action=${action}, trade=${merchantTradeNo}, body=${body}`);
       throw new InternalServerErrorException(`ECPay ${action} operation failed.`);
     }
 
     const result = await response.text();
-    this.logger.log(`ECPay DoAction 完成 — action=${action}, trade=${tradeNo}, result=${result}`);
+    this.logger.log(`ECPay DoAction 完成 — action=${action}, trade=${merchantTradeNo}, result=${result}`);
   }
 }
